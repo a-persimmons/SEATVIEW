@@ -159,9 +159,10 @@ export default function Venue3D(props: Props) {
     const mount = mountRef.current
     if (!mount) return
     ;(window as unknown as { __SCENE_READY__?: boolean }).__SCENE_READY__ = false
+    const compactDevice = mount.clientWidth < 768 || window.matchMedia('(pointer: coarse)').matches
     let renderer: THREE.WebGLRenderer
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
+      renderer = new THREE.WebGLRenderer({ antialias: !compactDevice, alpha: false, powerPreference: 'high-performance' })
     } catch {
       setError(true)
       return
@@ -171,14 +172,17 @@ export default function Venue3D(props: Props) {
     scene.background = new THREE.Color('#07101c')
     scene.fog = new THREE.FogExp2('#07101c', 0.0019)
     const camera = new THREE.PerspectiveCamera(42, 1, 0.15, 900)
+    let needsRender = true
     const initiallyPortrait = mount.clientWidth / mount.clientHeight < 0.8
     camera.position.set(...(initiallyPortrait ? [310, 260, 370] : [185, 160, 230]) as [number, number, number])
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, compactDevice ? 1.2 : 1.5))
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.08
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
+    renderer.shadowMap.autoUpdate = false
+    renderer.shadowMap.needsUpdate = true
     renderer.domElement.setAttribute('aria-label', '可拖动旋转的场馆模型；进入第一视角后可拖动环视，也可使用方向键调整观看方向')
     renderer.domElement.tabIndex = 0
     renderer.domElement.style.touchAction = 'none'
@@ -193,6 +197,7 @@ export default function Venue3D(props: Props) {
     controls.maxPolarAngle = Math.PI * 0.48
     controls.minPolarAngle = Math.PI * 0.08
     controls.autoRotateSpeed = 0.4
+    controls.addEventListener('change', () => { needsRender = true })
 
     scene.add(new THREE.HemisphereLight('#c4e8f2', '#08131b', 1.8))
     const keyLight = new THREE.DirectionalLight('#eef8ff', 2.6)
@@ -342,7 +347,9 @@ export default function Venue3D(props: Props) {
     for (const section of SECTIONS) {
       if (section.kind === 'stand') {
         const config = STAND_TIERS[section.tier || 0]
-        const columnsPerSection = section.tier === 0 ? 12 : 10
+        const columnsPerSection = section.tier === 0
+          ? (compactDevice ? 8 : 10)
+          : (compactDevice ? 6 : 8)
         for (let row = 0; row < config.rows; row += 1) {
           const ratio = (row + 0.5) / config.rows
           const rx = THREE.MathUtils.lerp(config.innerRx, config.outerRx, ratio)
@@ -417,6 +424,7 @@ export default function Venue3D(props: Props) {
         heads.setMatrixAt(index, dummy.matrix)
       })
       heads.instanceMatrix.needsUpdate = true
+      needsRender = true
     }
 
     const stage = new THREE.Group()
@@ -481,6 +489,7 @@ export default function Venue3D(props: Props) {
       const nextDirection = new THREE.Vector3().setFromSpherical(spherical).normalize().multiplyScalar(50)
       controls.target.copy(camera.position).add(nextDirection)
       camera.lookAt(controls.target)
+      needsRender = true
     }
 
     const onPointerDown = (event: PointerEvent) => {
@@ -553,15 +562,18 @@ export default function Venue3D(props: Props) {
         chairs.setColorAt(index, isSelected ? new THREE.Color('#8df3fa') : isDimmed ? new THREE.Color('#243842') : baseSeatColors[index])
       })
       if (chairs.instanceColor) chairs.instanceColor.needsUpdate = true
+      needsRender = true
     }
 
     const applyZoom = () => {
       const baseRadians = THREE.MathUtils.degToRad(baseFov)
       camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(baseRadians / 2) / currentZoom))
       camera.updateProjectionMatrix()
+      needsRender = true
     }
 
     const moveCamera = (position: THREE.Vector3, target: THREE.Vector3) => {
+      needsRender = true
       desiredPosition = position
       desiredTarget = target
       transitionFromPosition = camera.position.clone()
@@ -661,6 +673,7 @@ export default function Venue3D(props: Props) {
       if (!immersiveNow) camera.fov = camera.aspect < 0.8 ? 50 : 42
       camera.updateProjectionMatrix()
       renderer.setSize(width, height, false)
+      needsRender = true
     }
     const observer = new ResizeObserver(resize)
     observer.observe(mount)
@@ -670,6 +683,7 @@ export default function Venue3D(props: Props) {
     const render = () => {
       frame = requestAnimationFrame(render)
       if (transitioning) {
+        needsRender = true
         const linearProgress = Math.min((performance.now() - transitionStartedAt) / 720, 1)
         const progress = 1 - Math.pow(1 - linearProgress, 3)
         camera.position.lerpVectors(transitionFromPosition, desiredPosition, progress)
@@ -681,12 +695,15 @@ export default function Venue3D(props: Props) {
         }
       }
       if (controls.enabled) controls.update()
-      else camera.lookAt(controls.target)
-      renderer.render(scene, camera)
-      ;(window as unknown as { __SCENE_STATS__?: object }).__SCENE_STATS__ = {
-        drawCalls: renderer.info.render.calls,
-        triangles: renderer.info.render.triangles,
-        geometries: renderer.info.memory.geometries,
+      else if (needsRender) camera.lookAt(controls.target)
+      if (needsRender) {
+        renderer.render(scene, camera)
+        ;(window as unknown as { __SCENE_STATS__?: object }).__SCENE_STATS__ = {
+          drawCalls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          geometries: renderer.info.memory.geometries,
+        }
+        needsRender = false
       }
     }
     render()
