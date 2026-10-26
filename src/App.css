@@ -224,6 +224,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .scene-grid::after { content: ""; position: absolute; inset: 0; opacity: .25; background-image: linear-gradient(#183244 1px, transparent 1px), linear-gradient(90deg, #183244 1px, transparent 1px); background-size: 40px 40px; mask-image: radial-gradient(circle, #000 0%, transparent 72%); }
 .venue-canvas { position: absolute; inset: 0; z-index: 1; }
 .venue-canvas canvas { display: block; width: 100%; height: 100%; }
+.venue-canvas canvas:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 .webgl-fallback { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; background: var(--ink-950); }
 .webgl-fallback img { width: 100%; height: 100%; object-fit: contain; opacity: .5; }
 .webgl-fallback span { position: absolute; bottom: 24px; padding: 10px 14px; background: var(--panel-raised); font-size: 12px; }
@@ -310,6 +311,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .view-distance > span svg { color: var(--accent); }
 .view-distance strong { color: var(--text-bright); font: 600 25px/1.25 ui-monospace, "SFMono-Regular", Consolas, monospace; letter-spacing: -.04em; }
 .view-distance small { color: var(--text-soft); font-size: 9px; }
+.look-hint { position: absolute; top: calc(50% + 30px); left: 50%; transform: translateX(-50%); padding: 6px 10px; display: flex; align-items: center; gap: 6px; border: 1px solid #ffffff1c; border-radius: 20px; background: #07101c8c; color: var(--text-soft); font-size: 10px; white-space: nowrap; backdrop-filter: blur(6px); text-shadow: 0 1px 8px #07101c; }
+.look-hint svg { color: var(--accent); }
 .camera-active .view-distance { top: 126px; }
 .view-reticle { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); opacity: .4; }
 .view-reticle i { position: absolute; background: var(--text-bright); }

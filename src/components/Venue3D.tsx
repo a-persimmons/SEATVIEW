@@ -179,7 +179,8 @@ export default function Venue3D(props: Props) {
     renderer.toneMappingExposure = 1.08
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
-    renderer.domElement.setAttribute('aria-label', '可拖动旋转的河北奥体中心演唱会估算模型')
+    renderer.domElement.setAttribute('aria-label', '可拖动旋转的场馆模型；进入第一视角后可拖动环视，也可使用方向键调整观看方向')
+    renderer.domElement.tabIndex = 0
     renderer.domElement.style.touchAction = 'none'
     mount.appendChild(renderer.domElement)
 
@@ -468,17 +469,72 @@ export default function Venue3D(props: Props) {
     const raycaster = new THREE.Raycaster()
     const pointer = new THREE.Vector2()
     let pointerStart = { x: 0, y: 0 }
-    const onPointerDown = (event: PointerEvent) => { pointerStart = { x: event.clientX, y: event.clientY } }
+    let lastPointer = { x: 0, y: 0 }
+    let lookingAround = false
+
+    const rotateView = (deltaX: number, deltaY: number) => {
+      if (!immersiveNow) return
+      transitioning = false
+      const direction = controls.target.clone().sub(camera.position)
+      if (direction.lengthSq() < 0.001) direction.set(0, 0, -50)
+      const spherical = new THREE.Spherical().setFromVector3(direction)
+      const sensitivity = 0.004 * Math.max(camera.fov / baseFov, 0.12)
+      spherical.theta -= deltaX * sensitivity
+      spherical.phi = THREE.MathUtils.clamp(spherical.phi + deltaY * sensitivity, 0.35, Math.PI - 0.35)
+      const nextDirection = new THREE.Vector3().setFromSpherical(spherical).normalize().multiplyScalar(50)
+      controls.target.copy(camera.position).add(nextDirection)
+      camera.lookAt(controls.target)
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      pointerStart = { x: event.clientX, y: event.clientY }
+      lastPointer = { ...pointerStart }
+      if (!immersiveNow) return
+      lookingAround = true
+      transitioning = false
+      renderer.domElement.setPointerCapture(event.pointerId)
+      renderer.domElement.style.cursor = 'grabbing'
+      renderer.domElement.focus({ preventScroll: true })
+    }
+    const onPointerMove = (event: PointerEvent) => {
+      if (!lookingAround || !immersiveNow) return
+      rotateView(event.clientX - lastPointer.x, event.clientY - lastPointer.y)
+      lastPointer = { x: event.clientX, y: event.clientY }
+    }
+    const finishLooking = (event: PointerEvent) => {
+      if (!lookingAround) return
+      lookingAround = false
+      renderer.domElement.style.cursor = immersiveNow ? 'grab' : ''
+      if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId)
+    }
     const onPointerUp = (event: PointerEvent) => {
-      if (Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5 || propsRef.current.immersive) return
+      const wasLookingAround = lookingAround
+      finishLooking(event)
+      if (wasLookingAround || Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5 || propsRef.current.immersive) return
       const rect = renderer.domElement.getBoundingClientRect()
       pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(pointer, camera)
       const hit = raycaster.intersectObjects(clickable, false)[0]
       if (hit?.object.userData.sectionId) propsRef.current.onSelect(hit.object.userData.sectionId)
     }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!immersiveNow) return
+      const directions: Record<string, [number, number]> = {
+        ArrowLeft: [-28, 0], a: [-28, 0], A: [-28, 0],
+        ArrowRight: [28, 0], d: [28, 0], D: [28, 0],
+        ArrowUp: [0, -22], w: [0, -22], W: [0, -22],
+        ArrowDown: [0, 22], s: [0, 22], S: [0, 22],
+      }
+      const direction = directions[event.key]
+      if (!direction) return
+      event.preventDefault()
+      rotateView(...direction)
+    }
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
+    renderer.domElement.addEventListener('pointermove', onPointerMove)
     renderer.domElement.addEventListener('pointerup', onPointerUp)
+    renderer.domElement.addEventListener('pointercancel', finishLooking)
+    renderer.domElement.addEventListener('keydown', onKeyDown)
 
     let desiredPosition = camera.position.clone()
     let desiredTarget = controls.target.clone()
@@ -523,6 +579,8 @@ export default function Venue3D(props: Props) {
 
     const overview = () => {
       immersiveNow = false
+      lookingAround = false
+      renderer.domElement.style.cursor = ''
       updateHeads()
       controls.enabled = true
       controls.enableZoom = true
@@ -572,6 +630,8 @@ export default function Venue3D(props: Props) {
       const section = SECTIONS.find((item) => item.id === selected)
       if (!section) return
       immersiveNow = true
+      lookingAround = false
+      renderer.domElement.style.cursor = 'grab'
       controls.enabled = false
       baseFov = section.kind === 'stand' ? 55 : 62
       applyZoom()
@@ -639,7 +699,10 @@ export default function Venue3D(props: Props) {
       cancelAnimationFrame(frame)
       observer.disconnect()
       renderer.domElement.removeEventListener('pointerdown', onPointerDown)
+      renderer.domElement.removeEventListener('pointermove', onPointerMove)
       renderer.domElement.removeEventListener('pointerup', onPointerUp)
+      renderer.domElement.removeEventListener('pointercancel', finishLooking)
+      renderer.domElement.removeEventListener('keydown', onKeyDown)
       controls.dispose()
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.LineSegments) {
@@ -660,7 +723,11 @@ export default function Venue3D(props: Props) {
   useEffect(() => { apiRef.current?.setAutoRotate(props.autoRotate) }, [props.autoRotate])
   useEffect(() => { apiRef.current?.setZoom(props.zoom) }, [props.zoom])
   useEffect(() => { if (props.captureSignal > 0) apiRef.current?.capture() }, [props.captureSignal])
-  useEffect(() => { if (props.resetKey > 0) apiRef.current?.overview() }, [props.resetKey])
+  useEffect(() => {
+    if (props.resetKey === 0) return
+    if (props.immersive) apiRef.current?.seatView(props.seatPosition)
+    else apiRef.current?.overview()
+  }, [props.resetKey])
   useEffect(() => {
     if (props.immersive) apiRef.current?.seatView(props.seatPosition)
     else apiRef.current?.overview()
