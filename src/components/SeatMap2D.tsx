@@ -99,9 +99,8 @@ export default function SeatMap2D({ selectedId, activePrice, onSelect }: Props) 
           <rect x={CX - 18.5 * SX} y={CY + (-59) * SY} width={37 * SX} height={8 * SY} rx="2" fill="url(#stage-screen)" />
           <text x={CX} y={CY + (-54.5) * SY} textAnchor="middle" className="stage-title">ENDLESS</text>
           <text x={CX} y={CY + (-51.5) * SY} textAnchor="middle" className="stage-subtitle">POSSIBILITY</text>
-          <rect x={CX - 2.5 * SX} y={CY + (-48) * SY} width={5 * SX} height={28 * SY} fill="#aebdca" />
-          <rect x={CX - 6 * SX} y={CY + (-21) * SY} width={12 * SX} height={5 * SY} rx="2" fill="#c8d3dc" />
-          <text x={CX + 18} y={CY + (-34) * SY} textAnchor="middle" className="stage-name" transform={`rotate(-90 ${CX + 18} ${CY + (-34) * SY})`}>延伸台</text>
+          <rect x={CX - 2 * SX} y={CY + (-48) * SY} width={4 * SX} height={28 * SY} fill="#aebdca" />
+          <text x={CX + 16} y={CY + (-34) * SY} textAnchor="middle" className="stage-name" transform={`rotate(-90 ${CX + 16} ${CY + (-34) * SY})`}>延伸台</text>
         </g>
 
         <g className="map-field">
@@ -144,8 +143,8 @@ export default function SeatMap2D({ selectedId, activePrice, onSelect }: Props) 
         </g>
 
         <g className="map-control-booth">
-          <rect x={CX + (-36) * SX} y={CY + 9.5 * SY} width={8 * SX} height={5 * SY} rx="2" fill="#d5dde2" />
-          <text x={CX + (-32) * SX} y={CY + 12.8 * SY} textAnchor="middle">控台</text>
+          <rect x={CX - 4 * SX} y={CY - 3 * SY} width={8 * SX} height={6 * SY} rx="2" fill="#d5dde2" />
+          <text x={CX} y={CY + 1 * SY} textAnchor="middle">控台</text>
         </g>
       </svg>
       <div className="map-orientation"><span>舞台方向</span><i /></div>

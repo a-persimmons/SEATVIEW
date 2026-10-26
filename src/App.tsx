@@ -191,7 +191,7 @@ export default function App() {
               <div className="quick-sections">
                 <div className="subheading"><span>快速选区</span>{activePrice !== null && <button onClick={() => setActivePrice(null)}>清除筛选</button>}</div>
                 <div className="section-chips">
-                  {['VIP1', 'VIP3', 'A1', 'A3', 'B1', '105', '112', '308'].map((id) => (
+                  {['VIP1', 'VIP5', 'A1', 'A3', 'B1', '105', '112', '308'].map((id) => (
                     <button key={id} className={selectedId === id ? 'active' : ''} onClick={() => selectSection(id)}>{SECTIONS.find((section) => section.id === id)?.name}</button>
                   ))}
                 </div>
@@ -352,7 +352,7 @@ export default function App() {
               <>
                 <span className="section-kicker">EVENT INFORMATION</span><h2 id="modal-title">无限可能超级演唱会</h2>
                 <p className="modal-lead">先看清位置，再决定坐在哪里。</p>
-                <dl className="event-details"><div><dt>演出时间</dt><dd>2026 年 11 月 14 日 18:00</dd></div><div><dt>演出场馆</dt><dd>河北奥林匹克体育中心体育场</dd></div><div><dt>模拟范围</dt><dd>内场 12 个分区、看台 62 个分区</dd></div><div><dt>数据说明</dt><dd>公开场馆资料校准的区域级估算模型，非官方测绘或具体排座还原。</dd></div></dl>
+                <dl className="event-details"><div><dt>演出时间</dt><dd>2026 年 11 月 14 日 18:00</dd></div><div><dt>演出场馆</dt><dd>河北奥林匹克体育中心体育场</dd></div><div><dt>模拟范围</dt><dd>内场 14 个分区、看台 62 个分区</dd></div><div><dt>数据说明</dt><dd>公开场馆资料校准的区域级估算模型，非官方测绘或具体排座还原。</dd></div></dl>
                 <button className="primary-action" onClick={() => setModal('reference')}>查看原始座位图<ChevronRight size={17} /></button>
               </>
             )}
