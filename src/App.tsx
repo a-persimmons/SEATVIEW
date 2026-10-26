@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, Box, CalendarDays, Check, ChevronRight, CircleHelp, Clock3, Expand,
-  Eye, Info, Layers2, Map, MapPin, MousePointer2, Pause, Play, RotateCcw,
+  ArrowLeft, Box, CalendarDays, Camera, Check, ChevronRight, CircleHelp, Clock3, Download, Expand,
+  Eye, Grid3X3, Info, Layers2, Map, MapPin, MousePointer2, Pause, Play, RotateCcw,
   Search, Share2, X,
 } from 'lucide-react'
 import SeatMap2D from './components/SeatMap2D'
@@ -12,7 +12,7 @@ import {
 } from './data'
 import './App.css'
 
-type ModalType = 'event' | 'reference' | 'help' | null
+type ModalType = 'event' | 'reference' | 'help' | 'capture' | null
 
 export default function App() {
   const [mode, setMode] = useState<ViewMode>('3d')
@@ -20,6 +20,11 @@ export default function App() {
   const [activePrice, setActivePrice] = useState<number | null>(null)
   const [immersive, setImmersive] = useState(false)
   const [seatPosition, setSeatPosition] = useState<SeatPosition>('middle')
+  const [cameraMode, setCameraMode] = useState(false)
+  const [zoom, setZoom] = useState(1)
+  const [showGrid, setShowGrid] = useState(true)
+  const [captureSignal, setCaptureSignal] = useState(0)
+  const [captureImage, setCaptureImage] = useState('')
   const [autoRotate, setAutoRotate] = useState(false)
   const [resetKey, setResetKey] = useState(0)
   const [query, setQuery] = useState('')
@@ -61,11 +66,15 @@ export default function App() {
 
   const changeMode = (nextMode: ViewMode) => {
     setImmersive(false)
+    setCameraMode(false)
+    setZoom(1)
     setMode(nextMode)
   }
 
   const resetView = () => {
     setImmersive(false)
+    setCameraMode(false)
+    setZoom(1)
     setActivePrice(null)
     setAutoRotate(false)
     setResetKey((value) => value + 1)
@@ -88,6 +97,24 @@ export default function App() {
     } catch {
       setToast('当前浏览器不支持全屏显示')
     }
+  }
+
+  const enterSeatView = () => {
+    setMode('3d')
+    setCameraMode(false)
+    setZoom(1)
+    setImmersive(true)
+  }
+
+  const cycleSeatPosition = () => {
+    const positions: SeatPosition[] = ['front', 'middle', 'back']
+    const next = (positions.indexOf(seatPosition) + 1) % positions.length
+    setSeatPosition(positions[next])
+  }
+
+  const handleCapture = (image: string) => {
+    setCaptureImage(image)
+    setModal('capture')
   }
 
   return (
@@ -197,7 +224,10 @@ export default function App() {
                 seatPosition={seatPosition}
                 autoRotate={autoRotate}
                 resetKey={resetKey}
+                zoom={zoom}
+                captureSignal={captureSignal}
                 onSelect={selectSection}
+                onCapture={handleCapture}
               />
             )}
 
@@ -209,21 +239,51 @@ export default function App() {
             )}
 
             {immersive && mode === '3d' && (
-              <div className="view-overlay">
+              <div className={`view-overlay ${cameraMode ? 'camera-active' : ''}`}>
                 <div className="view-topline">
                   <button onClick={() => setImmersive(false)}><ArrowLeft size={17} />返回场馆</button>
-                  <div><span className="live-dot" />视角模拟</div>
+                  <button className="camera-entry" onClick={() => { setCameraMode(!cameraMode); setZoom(1) }}>
+                    {cameraMode ? <Eye size={16} /> : <Camera size={16} />}{cameraMode ? '视角模式' : '相机取景'}
+                  </button>
                   <span>{selected.name} · {getPositionLabel(seatPosition)}</span>
                 </div>
-                <div className="view-reticle" aria-hidden="true"><i /><i /></div>
-                <div className="view-bottom">
-                  <div className="view-caption"><span>ESTIMATED VIEW</span><strong>{selected.direction}</strong><small>模拟画面仅用于比较位置关系，非现场实拍</small></div>
-                  <div className="position-switch dark">
-                    {(['front', 'middle', 'back'] as SeatPosition[]).map((position) => (
-                      <button key={position} className={seatPosition === position ? 'active' : ''} onClick={() => setSeatPosition(position)}>{getPositionLabel(position)}</button>
-                    ))}
-                  </div>
-                </div>
+
+                {!cameraMode && (
+                  <>
+                    <div className="view-reticle" aria-hidden="true"><i /><i /></div>
+                    <div className="view-bottom">
+                      <div className="view-caption"><span>ESTIMATED VIEW</span><strong>{selected.direction}</strong><small>模拟画面仅用于比较位置关系，非现场实拍</small></div>
+                      <div className="position-switch dark">
+                        {(['front', 'middle', 'back'] as SeatPosition[]).map((position) => (
+                          <button key={position} className={seatPosition === position ? 'active' : ''} onClick={() => setSeatPosition(position)}>{getPositionLabel(position)}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {cameraMode && (
+                  <>
+                    <div className={`camera-frame ${showGrid ? 'with-grid' : ''}`} aria-hidden="true">
+                      <span className="corner-tl" /><span className="corner-tr" /><span className="corner-bl" /><span className="corner-br" />
+                      {showGrid && <div className="camera-grid"><i /><i /><i /><i /></div>}
+                    </div>
+                    <div className="camera-status"><span>PHOTO</span><b>{zoom.toFixed(1)}×</b><small>模拟焦距 · 非真实手机镜头效果</small></div>
+                    <div className="camera-controls">
+                      <div className="zoom-switch" aria-label="相机放大倍数">
+                        {[1, 2, 3, 4, 5].map((value) => (
+                          <button key={value} className={zoom === value ? 'active' : ''} onClick={() => setZoom(value)} aria-label={`${value}倍焦距`} aria-pressed={zoom === value}>{value}×</button>
+                        ))}
+                      </div>
+                      <div className="camera-shutter-row">
+                        <button className={`camera-tool ${showGrid ? 'active' : ''}`} onClick={() => setShowGrid(!showGrid)} aria-label={showGrid ? '隐藏九宫格' : '显示九宫格'} aria-pressed={showGrid}><Grid3X3 size={20} /><span>九宫格</span></button>
+                        <button className="camera-shutter" onClick={() => setCaptureSignal((value) => value + 1)} aria-label="拍摄取景截图"><i /></button>
+                        <button className="camera-tool position-tool" onClick={cycleSeatPosition} aria-label="切换区域内位置"><Camera size={19} /><span>{getPositionLabel(seatPosition)}</span></button>
+                      </div>
+                    </div>
+                    {captureSignal > 0 && <div key={captureSignal} className="camera-flash" aria-hidden="true" />}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -264,7 +324,7 @@ export default function App() {
             <p className="position-note">{selected.note}</p>
           </div>
 
-          <button className="primary-action" onClick={() => { if (immersive) setImmersive(false); else { setMode('3d'); setImmersive(true) } }}>
+          <button className="primary-action" onClick={() => { if (immersive) setImmersive(false); else enterSeatView() }}>
             {immersive ? <><ArrowLeft size={18} />返回场馆选区<ChevronRight size={17} /></> : <><Eye size={18} />模拟观看视角<ChevronRight size={17} /></>}
           </button>
           <button className="secondary-action" onClick={() => setModal('reference')}><Map size={17} />对照原始座位图</button>
@@ -276,7 +336,7 @@ export default function App() {
 
       {modal && (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModal(null)}>
-          <section className={`modal ${modal === 'reference' ? 'reference-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <section className={`modal ${modal === 'reference' || modal === 'capture' ? 'reference-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <button className="modal-close icon-button" onClick={() => setModal(null)} aria-label="关闭弹窗"><X size={19} /></button>
             {modal === 'event' && (
               <>
@@ -290,7 +350,10 @@ export default function App() {
               <><span className="section-kicker">ORIGINAL SEAT MAP</span><h2 id="modal-title">主办方分区示意图</h2><div className="reference-image"><img src="/seat-map-reference.jpg" alt="无限可能超级演唱会原始分区与票档图" /></div><p className="reference-caption">原始图片仅用于分区对照，实际尺寸及内场通道以现场为准。</p></>
             )}
             {modal === 'help' && (
-              <><span className="section-kicker">QUICK GUIDE</span><h2 id="modal-title">三步找到合适的位置</h2><ol className="guide-list"><li><b>筛选票档</b><p>在左侧选择预算，地图会保留对应票档的区域。</p></li><li><b>比较区域</b><p>点击 2D 或 3D 场馆中的彩色分区，查看方向、距离和位置特点。</p></li><li><b>进入视角</b><p>选择区域内前、中、后排，进入第一人称模拟，直观比较舞台在视野中的大小。</p></li></ol><div className="keyboard-help"><span>快捷键</span><kbd>Esc</kbd><small>退出观看视角或关闭弹窗</small></div></>
+              <><span className="section-kicker">QUICK GUIDE</span><h2 id="modal-title">三步找到合适的位置</h2><ol className="guide-list"><li><b>筛选票档</b><p>在左侧选择预算，地图会保留对应票档的区域。</p></li><li><b>比较区域</b><p>点击 2D 或 3D 场馆中的彩色分区，查看方向、距离和位置特点。</p></li><li><b>进入视角与相机</b><p>选择区域内前、中、后排进入第一人称模拟；切换“相机取景”后，可使用 1–5 倍焦距、九宫格并保存取景截图。</p></li></ol><div className="keyboard-help"><span>快捷键</span><kbd>Esc</kbd><small>退出观看视角或关闭弹窗</small></div></>
+            )}
+            {modal === 'capture' && captureImage && (
+              <><span className="section-kicker">CAMERA CAPTURE</span><h2 id="modal-title">取景截图</h2><div className="capture-preview"><img src={captureImage} alt={`${selected.name} ${zoom}倍焦距取景截图`} /></div><div className="capture-meta"><span>{selected.name} · {getPositionLabel(seatPosition)}</span><b>{zoom.toFixed(1)}×</b></div><a className="primary-action download-action" href={captureImage} download={`无限可能-${selected.name}-${zoom}倍取景.png`}><Download size={18} />保存取景截图</a><button className="secondary-action" onClick={() => setModal(null)}>继续取景</button></>
             )}
           </section>
         </div>

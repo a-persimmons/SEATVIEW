@@ -10,7 +10,10 @@ type Props = {
   seatPosition: SeatPosition
   autoRotate: boolean
   resetKey: number
+  zoom: number
+  captureSignal: number
   onSelect: (id: string) => void
+  onCapture: (image: string) => void
 }
 
 type SceneApi = {
@@ -19,6 +22,8 @@ type SceneApi = {
   overview: () => void
   seatView: (position: SeatPosition) => void
   setAutoRotate: (value: boolean) => void
+  setZoom: (value: number) => void
+  capture: () => void
 }
 
 function makeScreenTexture() {
@@ -282,6 +287,14 @@ export default function Venue3D(props: Props) {
     let transitioning = false
     let selected = ''
     let immersiveNow = false
+    let currentZoom = propsRef.current.zoom
+    let baseFov = 62
+
+    const applyZoom = () => {
+      const baseRadians = THREE.MathUtils.degToRad(baseFov)
+      camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(baseRadians / 2) / currentZoom))
+      camera.updateProjectionMatrix()
+    }
 
     const moveCamera = (position: THREE.Vector3, target: THREE.Vector3) => {
       desiredPosition = position
@@ -347,8 +360,8 @@ export default function Venue3D(props: Props) {
       if (!section) return
       immersiveNow = true
       controls.enabled = false
-      camera.fov = section.kind === 'stand' ? 52 : 62
-      camera.updateProjectionMatrix()
+      baseFov = section.kind === 'stand' ? 52 : 62
+      applyZoom()
       const rowOffset = positionName === 'front' ? -0.28 : positionName === 'back' ? 0.28 : 0
       let eye: THREE.Vector3
       if (section.kind === 'field') {
@@ -370,6 +383,11 @@ export default function Venue3D(props: Props) {
       overview,
       seatView,
       setAutoRotate: (value) => { controls.autoRotate = value },
+      setZoom: (value) => { currentZoom = value; if (immersiveNow) applyZoom() },
+      capture: () => {
+        renderer.render(scene, camera)
+        propsRef.current.onCapture(renderer.domElement.toDataURL('image/png'))
+      },
     }
     select(propsRef.current.selectedId, false)
     filter(propsRef.current.activePrice)
@@ -435,6 +453,8 @@ export default function Venue3D(props: Props) {
   useEffect(() => { apiRef.current?.select(props.selectedId, !props.immersive) }, [props.selectedId])
   useEffect(() => { apiRef.current?.filter(props.activePrice) }, [props.activePrice])
   useEffect(() => { apiRef.current?.setAutoRotate(props.autoRotate) }, [props.autoRotate])
+  useEffect(() => { apiRef.current?.setZoom(props.zoom) }, [props.zoom])
+  useEffect(() => { if (props.captureSignal > 0) apiRef.current?.capture() }, [props.captureSignal])
   useEffect(() => { if (props.resetKey > 0) apiRef.current?.overview() }, [props.resetKey])
   useEffect(() => {
     if (props.immersive) apiRef.current?.seatView(props.seatPosition)
