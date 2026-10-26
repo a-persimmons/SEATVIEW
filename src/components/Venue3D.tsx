@@ -481,7 +481,6 @@ export default function Venue3D(props: Props) {
       lastPointer = { ...pointerStart }
       if (!immersiveNow) return
       lookingAround = true
-      transitioning = false
       renderer.domElement.setPointerCapture(event.pointerId)
       renderer.domElement.style.cursor = 'grabbing'
       renderer.domElement.focus({ preventScroll: true })
@@ -498,9 +497,8 @@ export default function Venue3D(props: Props) {
       if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId)
     }
     const onPointerUp = (event: PointerEvent) => {
-      const wasLookingAround = lookingAround
       finishLooking(event)
-      if (wasLookingAround || Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5 || propsRef.current.immersive) return
+      if (Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 8) return
       const rect = renderer.domElement.getBoundingClientRect()
       pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(pointer, camera)
@@ -510,7 +508,7 @@ export default function Venue3D(props: Props) {
         if (seat) propsRef.current.onSeatSelect({ sectionId: seat.sectionId, row: seat.row, column: seat.column })
         return
       }
-      if (hit?.object.userData.sectionId) propsRef.current.onSelect(hit.object.userData.sectionId)
+      if (!immersiveNow && hit?.object.userData.sectionId) propsRef.current.onSelect(hit.object.userData.sectionId)
     }
     const onKeyDown = (event: KeyboardEvent) => {
       if (!immersiveNow) return
@@ -595,9 +593,14 @@ export default function Venue3D(props: Props) {
       const section = SECTIONS.find((item) => item.id === id)
       if (!section || immersiveNow) return
       const radial = new THREE.Vector3(section.x, 0, section.z).normalize()
-      const position = new THREE.Vector3(section.x, section.kind === 'stand' ? 48 : 30, section.z)
-        .add(radial.multiplyScalar(section.kind === 'stand' ? 42 : 38))
-      moveCamera(position, new THREE.Vector3(section.x * 0.65, section.kind === 'stand' ? 12 : 3, section.z * 0.65 - 4))
+      if (section.kind === 'stand') {
+        const position = new THREE.Vector3(section.x, section.tier === 0 ? 32 : 52, section.z)
+          .add(radial.multiplyScalar(-34))
+        moveCamera(position, new THREE.Vector3(section.x, section.tier === 0 ? 9 : 27, section.z))
+        return
+      }
+      const position = new THREE.Vector3(section.x, 30, section.z).add(radial.multiplyScalar(38))
+      moveCamera(position, new THREE.Vector3(section.x * 0.65, 3, section.z * 0.65 - 4))
     }
 
     const select = (id: string, move = true) => {
@@ -629,6 +632,7 @@ export default function Venue3D(props: Props) {
     const seatView = (positionName: SeatPosition) => {
       const section = SECTIONS.find((item) => item.id === selected)
       if (!section) return
+      const wasImmersive = immersiveNow
       immersiveNow = true
       lookingAround = false
       renderer.domElement.style.cursor = 'grab'
@@ -639,8 +643,20 @@ export default function Venue3D(props: Props) {
         ? getSeatViewEstimate(section, activeSeat)
         : getViewEstimate(section, positionName)
       const eye = new THREE.Vector3(estimate.eye.x, estimate.eye.y, estimate.eye.z)
+      const stageTarget = new THREE.Vector3(0, 7, -53)
       updateHeads(eye)
-      moveCamera(eye, new THREE.Vector3(0, 7, -53))
+      controls.target.copy(stageTarget)
+      camera.lookAt(stageTarget)
+      if (wasImmersive) {
+        moveCamera(eye, stageTarget)
+      } else {
+        transitioning = false
+        camera.position.copy(eye)
+        desiredPosition = eye.clone()
+        desiredTarget = stageTarget.clone()
+        camera.lookAt(stageTarget)
+        needsRender = true
+      }
     }
 
     apiRef.current = {
@@ -730,7 +746,7 @@ export default function Venue3D(props: Props) {
     }
   }, [])
 
-  useEffect(() => { apiRef.current?.select(props.selectedId, !props.immersive) }, [props.selectedId])
+  useEffect(() => { apiRef.current?.select(props.selectedId, !props.immersive && !props.selectedSeat) }, [props.selectedId])
   useEffect(() => { apiRef.current?.selectSeat(props.selectedSeat) }, [props.selectedSeat])
   useEffect(() => { apiRef.current?.filter(props.activePrice) }, [props.activePrice])
   useEffect(() => { apiRef.current?.setAutoRotate(props.autoRotate) }, [props.autoRotate])
@@ -744,7 +760,7 @@ export default function Venue3D(props: Props) {
   useEffect(() => {
     if (props.immersive) apiRef.current?.seatView(props.seatPosition)
     else apiRef.current?.overview()
-  }, [props.immersive, props.seatPosition])
+  }, [props.immersive, props.seatPosition, props.selectedSeat])
 
   if (error) {
     return <div className="webgl-fallback"><img src="/seat-map-reference.jpg" alt="原始座位图" /><span>当前设备无法开启 3D，请切换 2D 模式</span></div>

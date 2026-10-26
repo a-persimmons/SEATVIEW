@@ -74,7 +74,6 @@ export default function App() {
     setSelectedId(seat.sectionId)
     setSelectedSeat(seat)
     setQuery('')
-    if (immersive) setImmersive(false)
   }
 
   const choosePosition = (position: SeatPosition) => {
@@ -275,7 +274,7 @@ export default function App() {
                   <strong>{viewEstimate.label}</strong>
                   <small>估算区间 {viewEstimate.rangeLabel}</small>
                 </div>
-                <div className="look-hint"><MousePointer2 size={13} /><span>{cameraMode ? '拖动画面调整取景角度' : '拖动画面环视'}</span></div>
+                <div className="look-hint"><MousePointer2 size={13} /><span>{cameraMode ? '拖动调整角度 · 点椅子换座' : '拖动环视 · 点击椅子换座'}</span></div>
 
                 {!cameraMode && (
                   <>
@@ -404,7 +403,7 @@ export default function App() {
               </>
             )}
             {modal === 'help' && (
-              <><span className="section-kicker">QUICK GUIDE</span><h2 id="modal-title">三步找到合适的位置</h2><ol className="guide-list"><li><b>筛选票档</b><p>在左侧选择预算，地图会保留对应票档的区域。</p></li><li><b>比较区域与座位</b><p>点击彩色分区查看区域信息；在 3D 中点击单把椅子，可选择模拟排、座并高亮。</p></li><li><b>进入视角与相机</b><p>选择区域内前、中、后排进入第一人称模拟，拖动画面即可环视，画面会显示至主舞台的预估距离；切换“相机取景”后，可拖动调整角度，并使用 1–5 倍焦距、九宫格和截图保存。</p></li></ol><div className="keyboard-help"><span>快捷键</span><kbd>Esc</kbd><small>退出观看视角或关闭弹窗</small></div></>
+              <><span className="section-kicker">QUICK GUIDE</span><h2 id="modal-title">三步找到合适的位置</h2><ol className="guide-list"><li><b>筛选票档</b><p>在左侧选择预算，地图会保留对应票档的区域。</p></li><li><b>比较区域与座位</b><p>点击彩色分区查看区域信息；在 3D 中点击单把椅子，可选择模拟排、座并高亮。</p></li><li><b>进入视角与相机</b><p>进入第一人称后，拖动画面可环视，单击另一把椅子可平滑换座并重新面向舞台；画面会显示预估距离。切换“相机取景”后，可调整角度，并使用 1–5 倍焦距、九宫格和截图保存。</p></li></ol><div className="keyboard-help"><span>快捷键</span><kbd>Esc</kbd><small>退出观看视角或关闭弹窗</small></div></>
             )}
             {modal === 'capture' && captureImage && (
               <><span className="section-kicker">CAMERA CAPTURE</span><h2 id="modal-title">取景截图</h2><div className="capture-preview"><img src={captureImage} alt={`${selected.name} ${zoom}倍焦距取景截图`} /></div><div className="capture-meta"><span>{selected.name} · {currentPositionLabel}</span><b>{zoom.toFixed(1)}×</b></div><a className="primary-action download-action" href={captureImage} download={`无限可能-${selected.name}-${zoom}倍取景.png`}><Download size={18} />保存取景截图</a><button className="secondary-action" onClick={() => setModal(null)}>继续取景</button></>
