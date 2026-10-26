@@ -1,5 +1,6 @@
 export type ViewMode = '2d' | '3d'
 export type SeatPosition = 'front' | 'middle' | 'back'
+export type SeatLocation = { sectionId: string, row: number, column: number }
 
 export type Section = {
   id: string
@@ -142,6 +143,41 @@ export function getPositionLabel(position: SeatPosition) {
   return { front: '区域前排', middle: '区域中部', back: '区域后排' }[position]
 }
 
+export function getSeatCounts(section: Section) {
+  if (section.kind === 'stand') {
+    return { rows: STAND_TIERS[section.tier || 0].rows, columns: section.tier === 0 ? 10 : 8 }
+  }
+  return {
+    rows: Math.max(7, Math.floor(section.depth / 1.35)),
+    columns: Math.max(8, Math.floor(section.width / 1.15)),
+  }
+}
+
+export function getSeatCoordinates(section: Section, seat: SeatLocation) {
+  const counts = getSeatCounts(section)
+  const row = Math.max(1, Math.min(counts.rows, seat.row))
+  const column = Math.max(1, Math.min(counts.columns, seat.column))
+  if (section.kind === 'stand') {
+    const config = STAND_TIERS[section.tier || 0]
+    const ratio = (row - 0.5) / counts.rows
+    const rx = THREE_LERP(config.innerRx, config.outerRx, ratio)
+    const rz = THREE_LERP(config.innerRz, config.outerRz, ratio)
+    const angle = section.angle! + (column / counts.columns - 0.5) * section.span! * 0.86
+    return {
+      x: Math.sin(angle) * rx,
+      y: THREE_LERP(config.innerY, config.outerY, ratio) + 0.3,
+      z: Math.cos(angle) * rz,
+      angle,
+    }
+  }
+  return {
+    x: section.x + (column / counts.columns - 0.5) * section.width * 0.9,
+    y: 0.48,
+    z: section.z + (row / counts.rows - 0.5) * section.depth * 0.9,
+    angle: 0,
+  }
+}
+
 export type ViewEstimate = {
   eye: { x: number, y: number, z: number }
   nominal: number
@@ -171,6 +207,21 @@ export function getViewEstimate(section: Section, position: SeatPosition): ViewE
       y: THREE_LERP(config.innerY, config.outerY, ratio) + 1.25,
       z: Math.cos(section.angle!) * rz,
     }
+  }
+  const actualDistance = Math.hypot(eye.x, eye.y - VENUE.stageTargetY, eye.z - VENUE.stageFrontZ)
+  const uncertainty = section.kind === 'field' ? 5 : 10
+  const nominal = roundToFive(actualDistance)
+  const min = roundToFive(actualDistance - uncertainty)
+  const max = roundToFive(actualDistance + uncertainty)
+  return { eye, nominal, min, max, label: `约 ${nominal} 米`, rangeLabel: `${min}–${max} 米` }
+}
+
+export function getSeatViewEstimate(section: Section, seat: SeatLocation): ViewEstimate {
+  const coordinates = getSeatCoordinates(section, seat)
+  const eye = {
+    x: coordinates.x,
+    y: section.kind === 'field' ? 1.62 : coordinates.y + 0.95,
+    z: coordinates.z,
   }
   const actualDistance = Math.hypot(eye.x, eye.y - VENUE.stageTargetY, eye.z - VENUE.stageFrontZ)
   const uncertainty = section.kind === 'field' ? 5 : 10

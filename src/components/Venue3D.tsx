@@ -2,10 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { SECTIONS, STAND_TIERS, VENUE, getViewEstimate, type SeatPosition } from '../data'
+import {
+  SECTIONS, STAND_TIERS, VENUE, getSeatCoordinates, getSeatCounts,
+  getSeatViewEstimate, getViewEstimate, type SeatLocation, type SeatPosition,
+} from '../data'
 
 type Props = {
   selectedId: string
+  selectedSeat: SeatLocation | null
   activePrice: number | null
   immersive: boolean
   seatPosition: SeatPosition
@@ -14,11 +18,13 @@ type Props = {
   zoom: number
   captureSignal: number
   onSelect: (id: string) => void
+  onSeatSelect: (seat: SeatLocation) => void
   onCapture: (image: string) => void
 }
 
 type SceneApi = {
   select: (id: string, moveCamera?: boolean) => void
+  selectSeat: (seat: SeatLocation | null) => void
   filter: (price: number | null) => void
   overview: () => void
   seatView: (position: SeatPosition) => void
@@ -34,6 +40,8 @@ type SeatInstance = {
   y: number
   z: number
   angle: number
+  row: number
+  column: number
 }
 
 function makeScreenTexture() {
@@ -345,35 +353,11 @@ export default function Venue3D(props: Props) {
 
     const seatData: SeatInstance[] = []
     for (const section of SECTIONS) {
-      if (section.kind === 'stand') {
-        const config = STAND_TIERS[section.tier || 0]
-        const columnsPerSection = section.tier === 0
-          ? (compactDevice ? 8 : 10)
-          : (compactDevice ? 6 : 8)
-        for (let row = 0; row < config.rows; row += 1) {
-          const ratio = (row + 0.5) / config.rows
-          const rx = THREE.MathUtils.lerp(config.innerRx, config.outerRx, ratio)
-          const rz = THREE.MathUtils.lerp(config.innerRz, config.outerRz, ratio)
-          const y = THREE.MathUtils.lerp(config.innerY, config.outerY, ratio) + 0.3
-          for (let column = 0; column < columnsPerSection; column += 1) {
-            const angle = section.angle! + ((column + 0.5) / columnsPerSection - 0.5) * section.span! * 0.86
-            seatData.push({ sectionId: section.id, kind: 'stand', x: Math.sin(angle) * rx, y, z: Math.cos(angle) * rz, angle })
-          }
-        }
-      } else {
-        const rows = Math.max(7, Math.floor(section.depth / 1.35))
-        const columnsPerSection = Math.max(8, Math.floor(section.width / 1.15))
-        for (let row = 0; row < rows; row += 1) {
-          for (let column = 0; column < columnsPerSection; column += 1) {
-            seatData.push({
-              sectionId: section.id,
-              kind: 'field',
-              x: section.x + ((column + 0.5) / columnsPerSection - 0.5) * section.width * 0.9,
-              y: 0.48,
-              z: section.z + ((row + 0.5) / rows - 0.5) * section.depth * 0.9,
-              angle: 0,
-            })
-          }
+      const { rows, columns: seatColumns } = getSeatCounts(section)
+      for (let row = 1; row <= rows; row += 1) {
+        for (let column = 1; column <= seatColumns; column += 1) {
+          const coordinates = getSeatCoordinates(section, { sectionId: section.id, row, column })
+          seatData.push({ sectionId: section.id, kind: section.kind, row, column, ...coordinates })
         }
       }
     }
@@ -520,7 +504,12 @@ export default function Venue3D(props: Props) {
       const rect = renderer.domElement.getBoundingClientRect()
       pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(pointer, camera)
-      const hit = raycaster.intersectObjects(clickable, false)[0]
+      const hit = raycaster.intersectObjects([...clickable, chairs], false)[0]
+      if (hit?.object === chairs && hit.instanceId !== undefined) {
+        const seat = seatData[hit.instanceId]
+        if (seat) propsRef.current.onSeatSelect({ sectionId: seat.sectionId, row: seat.row, column: seat.column })
+        return
+      }
       if (hit?.object.userData.sectionId) propsRef.current.onSelect(hit.object.userData.sectionId)
     }
     const onKeyDown = (event: KeyboardEvent) => {
@@ -549,6 +538,7 @@ export default function Venue3D(props: Props) {
     let transitionStartedAt = 0
     let transitioning = false
     let selected = ''
+    let activeSeat: SeatLocation | null = null
     let immersiveNow = false
     let activePrice: number | null = null
     let currentZoom = propsRef.current.zoom
@@ -558,8 +548,9 @@ export default function Venue3D(props: Props) {
       seatData.forEach((seat, index) => {
         const section = SECTIONS.find((item) => item.id === seat.sectionId)!
         const isSelected = seat.sectionId === selected
+        const isSelectedSeat = activeSeat?.sectionId === seat.sectionId && activeSeat.row === seat.row && activeSeat.column === seat.column
         const isDimmed = activePrice !== null && section.price !== activePrice && !isSelected
-        chairs.setColorAt(index, isSelected ? new THREE.Color('#8df3fa') : isDimmed ? new THREE.Color('#243842') : baseSeatColors[index])
+        chairs.setColorAt(index, isSelectedSeat ? new THREE.Color('#fff1a6') : isSelected ? new THREE.Color('#8df3fa') : isDimmed ? new THREE.Color('#243842') : baseSeatColors[index])
       })
       if (chairs.instanceColor) chairs.instanceColor.needsUpdate = true
       needsRender = true
@@ -644,7 +635,9 @@ export default function Venue3D(props: Props) {
       controls.enabled = false
       baseFov = section.kind === 'stand' ? 55 : 62
       applyZoom()
-      const estimate = getViewEstimate(section, positionName)
+      const estimate = activeSeat?.sectionId === section.id
+        ? getSeatViewEstimate(section, activeSeat)
+        : getViewEstimate(section, positionName)
       const eye = new THREE.Vector3(estimate.eye.x, estimate.eye.y, estimate.eye.z)
       updateHeads(eye)
       moveCamera(eye, new THREE.Vector3(0, 7, -53))
@@ -652,6 +645,11 @@ export default function Venue3D(props: Props) {
 
     apiRef.current = {
       select,
+      selectSeat: (seat) => {
+        activeSeat = seat
+        if (seat) select(seat.sectionId, false)
+        else updateChairColors()
+      },
       filter,
       overview,
       seatView,
@@ -733,6 +731,7 @@ export default function Venue3D(props: Props) {
   }, [])
 
   useEffect(() => { apiRef.current?.select(props.selectedId, !props.immersive) }, [props.selectedId])
+  useEffect(() => { apiRef.current?.selectSeat(props.selectedSeat) }, [props.selectedSeat])
   useEffect(() => { apiRef.current?.filter(props.activePrice) }, [props.activePrice])
   useEffect(() => { apiRef.current?.setAutoRotate(props.autoRotate) }, [props.autoRotate])
   useEffect(() => { apiRef.current?.setZoom(props.zoom) }, [props.zoom])

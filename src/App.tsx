@@ -7,8 +7,8 @@ import {
 import SeatMap2D from './components/SeatMap2D'
 import Venue3D from './components/Venue3D'
 import {
-  DEFAULT_SECTION, PRICE_LEVELS, SECTIONS, getPositionLabel, getViewEstimate,
-  type SeatPosition, type ViewMode,
+  DEFAULT_SECTION, PRICE_LEVELS, SECTIONS, getPositionLabel, getSeatViewEstimate, getViewEstimate,
+  type SeatLocation, type SeatPosition, type ViewMode,
 } from './data'
 import './App.css'
 
@@ -17,6 +17,7 @@ type ModalType = 'event' | 'reference' | 'help' | 'capture' | 'data' | null
 export default function App() {
   const [mode, setMode] = useState<ViewMode>('3d')
   const [selectedId, setSelectedId] = useState(DEFAULT_SECTION.id)
+  const [selectedSeat, setSelectedSeat] = useState<SeatLocation | null>(null)
   const [activePrice, setActivePrice] = useState<number | null>(null)
   const [immersive, setImmersive] = useState(false)
   const [seatPosition, setSeatPosition] = useState<SeatPosition>('middle')
@@ -32,7 +33,10 @@ export default function App() {
   const [toast, setToast] = useState('')
   const workspaceRef = useRef<HTMLDivElement>(null)
   const selected = SECTIONS.find((section) => section.id === selectedId) || DEFAULT_SECTION
-  const viewEstimate = getViewEstimate(selected, seatPosition)
+  const viewEstimate = selectedSeat?.sectionId === selected.id
+    ? getSeatViewEstimate(selected, selectedSeat)
+    : getViewEstimate(selected, seatPosition)
+  const currentPositionLabel = selectedSeat ? `${selectedSeat.row}排 ${selectedSeat.column}座` : getPositionLabel(seatPosition)
 
   const searchResults = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -61,8 +65,21 @@ export default function App() {
 
   const selectSection = (id: string) => {
     setSelectedId(id)
+    setSelectedSeat(null)
     setQuery('')
     if (immersive) setImmersive(false)
+  }
+
+  const selectSeat = (seat: SeatLocation) => {
+    setSelectedId(seat.sectionId)
+    setSelectedSeat(seat)
+    setQuery('')
+    if (immersive) setImmersive(false)
+  }
+
+  const choosePosition = (position: SeatPosition) => {
+    setSelectedSeat(null)
+    setSeatPosition(position)
   }
 
   const changeMode = (nextMode: ViewMode) => {
@@ -112,7 +129,7 @@ export default function App() {
   const cycleSeatPosition = () => {
     const positions: SeatPosition[] = ['front', 'middle', 'back']
     const next = (positions.indexOf(seatPosition) + 1) % positions.length
-    setSeatPosition(positions[next])
+    choosePosition(positions[next])
   }
 
   const handleCapture = (image: string) => {
@@ -222,6 +239,7 @@ export default function App() {
             ) : (
               <Venue3D
                 selectedId={selectedId}
+                selectedSeat={selectedSeat}
                 activePrice={activePrice}
                 immersive={immersive}
                 seatPosition={seatPosition}
@@ -230,6 +248,7 @@ export default function App() {
                 zoom={zoom}
                 captureSignal={captureSignal}
                 onSelect={selectSection}
+                onSeatSelect={selectSeat}
                 onCapture={handleCapture}
               />
             )}
@@ -237,7 +256,7 @@ export default function App() {
             {!immersive && (
               <>
                 <button className="scene-label" onClick={() => setModal('data')} title="查看模型依据"><span className="live-dot" />{mode === '3d' ? '公开资料校准模型' : '可交互 2D 分区'}<small>HEBEI OLYMPIC SPORTS CENTER · ESTIMATED</small></button>
-                <div className="scene-hint"><MousePointer2 size={14} /><span>{mode === '3d' ? '拖动旋转 · 滚轮缩放 · 点击分区' : '点击彩色分区查看详情'}</span></div>
+                <div className="scene-hint"><MousePointer2 size={14} /><span>{mode === '3d' ? '拖动旋转 · 滚轮缩放 · 点击椅子选座' : '点击彩色分区查看详情'}</span></div>
               </>
             )}
 
@@ -248,7 +267,7 @@ export default function App() {
                   <button className="camera-entry" onClick={() => { setCameraMode(!cameraMode); setZoom(1) }}>
                     {cameraMode ? <Eye size={16} /> : <Camera size={16} />}{cameraMode ? '视角模式' : '相机取景'}
                   </button>
-                  <span>{selected.name} · {getPositionLabel(seatPosition)}</span>
+                  <span>{selected.name} · {currentPositionLabel}</span>
                 </div>
 
                 <div className="view-distance" aria-label="预估到主舞台距离">
@@ -265,7 +284,7 @@ export default function App() {
                       <div className="view-caption"><span>ESTIMATED VIEW</span><strong>{selected.direction}</strong><small>公开资料与分区图推算 · 非现场实拍</small></div>
                       <div className="position-switch dark">
                         {(['front', 'middle', 'back'] as SeatPosition[]).map((position) => (
-                          <button key={position} className={seatPosition === position ? 'active' : ''} onClick={() => setSeatPosition(position)}>{getPositionLabel(position)}</button>
+                          <button key={position} className={!selectedSeat && seatPosition === position ? 'active' : ''} onClick={() => choosePosition(position)}>{getPositionLabel(position)}</button>
                         ))}
                       </div>
                     </div>
@@ -288,7 +307,7 @@ export default function App() {
                       <div className="camera-shutter-row">
                         <button className={`camera-tool ${showGrid ? 'active' : ''}`} onClick={() => setShowGrid(!showGrid)} aria-label={showGrid ? '隐藏九宫格' : '显示九宫格'} aria-pressed={showGrid}><Grid3X3 size={20} /><span>九宫格</span></button>
                         <button className="camera-shutter" onClick={() => setCaptureSignal((value) => value + 1)} aria-label="拍摄取景截图"><i /></button>
-                        <button className="camera-tool position-tool" onClick={cycleSeatPosition} aria-label="切换区域内位置"><Camera size={19} /><span>{getPositionLabel(seatPosition)}</span></button>
+                        <button className="camera-tool position-tool" onClick={cycleSeatPosition} aria-label="切换区域内位置"><Camera size={19} /><span>{currentPositionLabel}</span></button>
                       </div>
                     </div>
                     {captureSignal > 0 && <div key={captureSignal} className="camera-flash" aria-hidden="true" />}
@@ -314,6 +333,13 @@ export default function App() {
             <div className="zone-price"><small>票档</small><b>¥{selected.price}</b></div>
           </div>
           <div className="zone-tags"><span><i style={{ background: selected.color }} />{selected.direction}</span><span>{viewEstimate.label}</span></div>
+          {selectedSeat && (
+            <div className="selected-seat-badge">
+              <span>已选模拟座位</span><strong>{selectedSeat.row}排 {selectedSeat.column}座</strong>
+              <button onClick={() => setSelectedSeat(null)} aria-label="取消具体座位，返回区域估算"><X size={13} /></button>
+              <small>排号为程序生成 · 非官方实际排号</small>
+            </div>
+          )}
 
           <div className="detail-section">
             <h3>这个位置怎么样</h3>
@@ -325,20 +351,20 @@ export default function App() {
           </div>
 
           <div className="detail-section position-detail">
-            <div className="detail-title-line"><h3>选择代表位置</h3><span>无需具体座位号</span></div>
+            <div className="detail-title-line"><h3>选择代表位置</h3><span>{selectedSeat ? '将取消具体座位' : '也可直接点击椅子'}</span></div>
             <div className="position-switch">
               {(['front', 'middle', 'back'] as SeatPosition[]).map((position) => (
-                <button key={position} className={seatPosition === position ? 'active' : ''} onClick={() => setSeatPosition(position)}>{getPositionLabel(position)}</button>
+                <button key={position} className={!selectedSeat && seatPosition === position ? 'active' : ''} onClick={() => choosePosition(position)}>{getPositionLabel(position)}</button>
               ))}
             </div>
-            <p className="position-note">{selected.note}</p>
+            <p className="position-note">{selectedSeat ? '当前距离与第一视角使用已选模拟座位。' : selected.note}</p>
           </div>
 
           <button className="primary-action" onClick={() => { if (immersive) setImmersive(false); else enterSeatView() }}>
-            {immersive ? <><ArrowLeft size={18} />返回场馆选区<ChevronRight size={17} /></> : <><Eye size={18} />模拟观看视角<ChevronRight size={17} /></>}
+            {immersive ? <><ArrowLeft size={18} />返回场馆选区<ChevronRight size={17} /></> : <><Eye size={18} />{selectedSeat ? '模拟此座位视角' : '模拟观看视角'}<ChevronRight size={17} /></>}
           </button>
           <button className="secondary-action" onClick={() => setModal('reference')}><Map size={17} />对照原始座位图</button>
-          <div className="accuracy-note"><Info size={15} /><p>依据公开建筑参数、场馆影像与主办方分区图估算。距离随代表位置变化，非具体排座测绘结果。<button className="data-link" onClick={() => setModal('data')}>查看建模依据</button></p></div>
+          <div className="accuracy-note"><Info size={15} /><p>依据公开资料与主办方分区图估算。可点击椅子选择模拟座位，排号非官方实际排号。<button className="data-link" onClick={() => setModal('data')}>查看建模依据</button></p></div>
         </aside>
       </main>
 
@@ -368,7 +394,7 @@ export default function App() {
                   <div><dt>尺度基准</dt><dd>以标准 400 米田径跑道及公开场馆影像校准场地比例、双层看台、罩棚、桅杆与拉索。</dd></div>
                   <div><dt>演出布局</dt><dd>舞台、延伸台、控台与票区位置依据所提供的主办方分区示意图估算。</dd></div>
                   <div><dt>距离算法</dt><dd>从区域内前／中／后代表观察点计算至主舞台前沿的空间距离，并以区间表达估算误差。</dd></div>
-                  <div><dt>精度边界</dt><dd>未使用 CAD／BIM、具体排座坐标或本场舞台搭建图；实际遮挡与尺寸以现场为准。</dd></div>
+                  <div><dt>精度边界</dt><dd>未使用 CAD／BIM、官方排座坐标或本场舞台搭建图；可点击座位为程序生成的模拟排号，实际遮挡与尺寸以现场为准。</dd></div>
                 </dl>
                 <div className="source-links">
                   <a href="https://sport.hebei.gov.cn/gongchengjianshe/zhengcefagui/2013/1113/1977.html" target="_blank" rel="noreferrer">河北省体育局 · 项目情况<ExternalLink size={13} /></a>
@@ -378,10 +404,10 @@ export default function App() {
               </>
             )}
             {modal === 'help' && (
-              <><span className="section-kicker">QUICK GUIDE</span><h2 id="modal-title">三步找到合适的位置</h2><ol className="guide-list"><li><b>筛选票档</b><p>在左侧选择预算，地图会保留对应票档的区域。</p></li><li><b>比较区域</b><p>点击 2D 或 3D 场馆中的彩色分区，查看方向、距离和位置特点。</p></li><li><b>进入视角与相机</b><p>选择区域内前、中、后排进入第一人称模拟，拖动画面即可环视，画面会显示至主舞台的预估距离；切换“相机取景”后，可拖动调整角度，并使用 1–5 倍焦距、九宫格和截图保存。</p></li></ol><div className="keyboard-help"><span>快捷键</span><kbd>Esc</kbd><small>退出观看视角或关闭弹窗</small></div></>
+              <><span className="section-kicker">QUICK GUIDE</span><h2 id="modal-title">三步找到合适的位置</h2><ol className="guide-list"><li><b>筛选票档</b><p>在左侧选择预算，地图会保留对应票档的区域。</p></li><li><b>比较区域与座位</b><p>点击彩色分区查看区域信息；在 3D 中点击单把椅子，可选择模拟排、座并高亮。</p></li><li><b>进入视角与相机</b><p>选择区域内前、中、后排进入第一人称模拟，拖动画面即可环视，画面会显示至主舞台的预估距离；切换“相机取景”后，可拖动调整角度，并使用 1–5 倍焦距、九宫格和截图保存。</p></li></ol><div className="keyboard-help"><span>快捷键</span><kbd>Esc</kbd><small>退出观看视角或关闭弹窗</small></div></>
             )}
             {modal === 'capture' && captureImage && (
-              <><span className="section-kicker">CAMERA CAPTURE</span><h2 id="modal-title">取景截图</h2><div className="capture-preview"><img src={captureImage} alt={`${selected.name} ${zoom}倍焦距取景截图`} /></div><div className="capture-meta"><span>{selected.name} · {getPositionLabel(seatPosition)}</span><b>{zoom.toFixed(1)}×</b></div><a className="primary-action download-action" href={captureImage} download={`无限可能-${selected.name}-${zoom}倍取景.png`}><Download size={18} />保存取景截图</a><button className="secondary-action" onClick={() => setModal(null)}>继续取景</button></>
+              <><span className="section-kicker">CAMERA CAPTURE</span><h2 id="modal-title">取景截图</h2><div className="capture-preview"><img src={captureImage} alt={`${selected.name} ${zoom}倍焦距取景截图`} /></div><div className="capture-meta"><span>{selected.name} · {currentPositionLabel}</span><b>{zoom.toFixed(1)}×</b></div><a className="primary-action download-action" href={captureImage} download={`无限可能-${selected.name}-${zoom}倍取景.png`}><Download size={18} />保存取景截图</a><button className="secondary-action" onClick={() => setModal(null)}>继续取景</button></>
             )}
           </section>
         </div>
