@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { SECTIONS, type SeatPosition } from '../data'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { SECTIONS, STAND_TIERS, VENUE, getViewEstimate, type SeatPosition } from '../data'
 
 type Props = {
   selectedId: string
@@ -26,27 +27,40 @@ type SceneApi = {
   capture: () => void
 }
 
+type SeatInstance = {
+  sectionId: string
+  kind: 'field' | 'stand'
+  x: number
+  y: number
+  z: number
+  angle: number
+}
+
 function makeScreenTexture() {
   const canvas = document.createElement('canvas')
   canvas.width = 1024
   canvas.height = 384
   const context = canvas.getContext('2d')!
-  context.fillStyle = '#07121e'
+  context.fillStyle = '#06111d'
   context.fillRect(0, 0, canvas.width, canvas.height)
-  context.strokeStyle = '#1d5b6c'
+  const gradient = context.createRadialGradient(512, 180, 10, 512, 180, 480)
+  gradient.addColorStop(0, '#174b63')
+  gradient.addColorStop(1, '#07121e')
+  context.fillStyle = gradient
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.strokeStyle = '#27677a'
   context.lineWidth = 2
   for (let x = 0; x < canvas.width; x += 64) {
     context.beginPath(); context.moveTo(x, 0); context.lineTo(x, canvas.height); context.stroke()
   }
-  context.fillStyle = '#d8fbff'
+  context.fillStyle = '#e2fcff'
   context.textAlign = 'center'
   context.font = '700 94px Arial, sans-serif'
   context.fillText('ENDLESS', 512, 168)
   context.fillStyle = '#5de7f5'
   context.font = '500 43px Arial, sans-serif'
-  context.letterSpacing = '12px'
   context.fillText('POSSIBILITY', 512, 250)
-  context.fillStyle = '#8ba6b4'
+  context.fillStyle = '#9bb4bf'
   context.font = '24px sans-serif'
   context.fillText('SUPER CONCERT · 2026', 512, 310)
   const texture = new THREE.CanvasTexture(canvas)
@@ -64,6 +78,76 @@ function seededRandom(seed: number) {
   }
 }
 
+function capsuleShape(radius: number, straight: number) {
+  const shape = new THREE.Shape()
+  shape.moveTo(radius, -straight / 2)
+  shape.lineTo(radius, straight / 2)
+  shape.absarc(0, straight / 2, radius, 0, Math.PI, false)
+  shape.lineTo(-radius, -straight / 2)
+  shape.absarc(0, -straight / 2, radius, Math.PI, Math.PI * 2, false)
+  return shape
+}
+
+function capsuleMesh(radius: number, straight: number, color: string, y: number) {
+  const geometry = new THREE.ShapeGeometry(capsuleShape(radius, straight), 64)
+  geometry.rotateX(-Math.PI / 2)
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, roughness: 0.94, metalness: 0.02 }))
+  mesh.position.y = y
+  mesh.receiveShadow = true
+  return mesh
+}
+
+function wedgeGeometry(section: (typeof SECTIONS)[number]) {
+  const config = STAND_TIERS[section.tier || 0]
+  const a0 = section.angle! - section.span! / 2
+  const a1 = section.angle! + section.span! / 2
+  const point = (rx: number, rz: number, angle: number, y: number) => [Math.sin(angle) * rx, y, Math.cos(angle) * rz]
+  const vertices = [
+    ...point(config.innerRx, config.innerRz, a0, 0),
+    ...point(config.innerRx, config.innerRz, a1, 0),
+    ...point(config.outerRx, config.outerRz, a1, 0),
+    ...point(config.outerRx, config.outerRz, a0, 0),
+    ...point(config.innerRx, config.innerRz, a0, config.innerY),
+    ...point(config.innerRx, config.innerRz, a1, config.innerY),
+    ...point(config.outerRx, config.outerRz, a1, config.outerY),
+    ...point(config.outerRx, config.outerRz, a0, config.outerY),
+  ]
+  const indices = [
+    4, 5, 6, 4, 6, 7,
+    0, 2, 1, 0, 3, 2,
+    0, 1, 5, 0, 5, 4,
+    3, 7, 6, 3, 6, 2,
+    0, 4, 7, 0, 7, 3,
+    1, 2, 6, 1, 6, 5,
+  ]
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+function roofGeometry(innerRx: number, innerRz: number, outerRx: number, outerRz: number) {
+  const segments = 128
+  const positions: number[] = []
+  const indices: number[] = []
+  for (let index = 0; index <= segments; index += 1) {
+    const angle = (index / segments) * Math.PI * 2
+    const wave = Math.cos(angle * 2) * 1.2
+    positions.push(Math.sin(angle) * innerRx, 41.5 + wave, Math.cos(angle) * innerRz)
+    positions.push(Math.sin(angle) * outerRx, VENUE.roofHeight - 1.2 + wave, Math.cos(angle) * outerRz)
+    if (index < segments) {
+      const base = index * 2
+      indices.push(base, base + 1, base + 3, base, base + 3, base + 2)
+    }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  return geometry
+}
+
 export default function Venue3D(props: Props) {
   const mountRef = useRef<HTMLDivElement>(null)
   const apiRef = useRef<SceneApi | null>(null)
@@ -74,6 +158,7 @@ export default function Venue3D(props: Props) {
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
+    ;(window as unknown as { __SCENE_READY__?: boolean }).__SCENE_READY__ = false
     let renderer: THREE.WebGLRenderer
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
@@ -84,73 +169,78 @@ export default function Venue3D(props: Props) {
 
     const scene = new THREE.Scene()
     scene.background = new THREE.Color('#07101c')
-    scene.fog = new THREE.FogExp2('#07101c', 0.0052)
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 600)
+    scene.fog = new THREE.FogExp2('#07101c', 0.0019)
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.15, 900)
     const initiallyPortrait = mount.clientWidth / mount.clientHeight < 0.8
-    camera.position.set(...(initiallyPortrait ? [112, 94, 132] : [80, 70, 94]) as [number, number, number])
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    camera.position.set(...(initiallyPortrait ? [310, 260, 370] : [185, 160, 230]) as [number, number, number])
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 1.12
+    renderer.toneMappingExposure = 1.08
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
-    renderer.domElement.setAttribute('aria-label', '可拖动旋转的三维演唱会场馆')
+    renderer.shadowMap.type = THREE.PCFShadowMap
+    renderer.domElement.setAttribute('aria-label', '可拖动旋转的河北奥体中心演唱会估算模型')
     renderer.domElement.style.touchAction = 'none'
     mount.appendChild(renderer.domElement)
 
     const controls = new OrbitControls(camera, renderer.domElement)
-    controls.target.set(0, 2, 3)
+    controls.target.set(0, 10, -4)
     controls.enableDamping = true
     controls.dampingFactor = 0.075
-    controls.minDistance = 18
-    controls.maxDistance = 180
-    controls.maxPolarAngle = Math.PI * 0.47
-    controls.minPolarAngle = Math.PI * 0.12
-    controls.autoRotateSpeed = 0.45
+    controls.minDistance = 24
+    controls.maxDistance = 520
+    controls.maxPolarAngle = Math.PI * 0.48
+    controls.minPolarAngle = Math.PI * 0.08
+    controls.autoRotateSpeed = 0.4
 
-    scene.add(new THREE.HemisphereLight('#b8e8ff', '#07101a', 1.75))
-    const keyLight = new THREE.DirectionalLight('#e5f5ff', 2.8)
-    keyLight.position.set(-35, 70, 30)
+    scene.add(new THREE.HemisphereLight('#c4e8f2', '#08131b', 1.8))
+    const keyLight = new THREE.DirectionalLight('#eef8ff', 2.6)
+    keyLight.position.set(-85, 140, 75)
     keyLight.castShadow = true
-    keyLight.shadow.mapSize.set(2048, 2048)
-    keyLight.shadow.camera.left = -75
-    keyLight.shadow.camera.right = 75
-    keyLight.shadow.camera.top = 75
-    keyLight.shadow.camera.bottom = -75
+    keyLight.shadow.mapSize.set(1024, 1024)
+    keyLight.shadow.camera.left = -160
+    keyLight.shadow.camera.right = 160
+    keyLight.shadow.camera.top = 160
+    keyLight.shadow.camera.bottom = -160
+    keyLight.shadow.camera.far = 400
     scene.add(keyLight)
-    const rim = new THREE.DirectionalLight('#25c8e8', 1.4)
-    rim.position.set(45, 28, -35)
+    const rim = new THREE.DirectionalLight('#68c8dd', 1.1)
+    rim.position.set(90, 65, -85)
     scene.add(rim)
 
     const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(210, 96),
-      new THREE.MeshStandardMaterial({ color: '#08131f', roughness: 0.98, metalness: 0.02 }),
+      new THREE.CircleGeometry(440, 128),
+      new THREE.MeshStandardMaterial({ color: '#08131d', roughness: 0.98, metalness: 0.02 }),
     )
     ground.rotation.x = -Math.PI / 2
-    ground.position.y = -0.16
+    ground.position.y = -0.2
     ground.receiveShadow = true
     scene.add(ground)
 
-    const fieldFloor = new THREE.Mesh(
-      new THREE.PlaneGeometry(72, 72),
-      new THREE.MeshStandardMaterial({ color: '#101d28', roughness: 0.9, metalness: 0.08 }),
+    const plaza = new THREE.Mesh(
+      new THREE.CircleGeometry(190, 128),
+      new THREE.MeshStandardMaterial({ color: '#17242c', roughness: 0.96 }),
     )
-    fieldFloor.rotation.x = -Math.PI / 2
-    fieldFloor.position.set(0, -0.08, 4)
-    fieldFloor.receiveShadow = true
-    scene.add(fieldFloor)
+    plaza.rotation.x = -Math.PI / 2
+    plaza.scale.set(1, 1.25, 1)
+    plaza.position.y = -0.12
+    scene.add(plaza)
 
-    const grid = new THREE.GridHelper(150, 50, '#173244', '#102432')
-    grid.position.y = -0.05
-    const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material]
-    gridMaterials.forEach((material) => { material.transparent = true; material.opacity = 0.2 })
-    scene.add(grid)
+    const outerTrackRadius = VENUE.trackRadius + VENUE.trackLanes * VENUE.trackLaneWidth
+    scene.add(capsuleMesh(outerTrackRadius, VENUE.trackStraight, '#175b83', 0))
+    scene.add(capsuleMesh(VENUE.trackRadius, VENUE.trackStraight, '#244b3f', 0.035))
+
+    const laneMaterial = new THREE.LineBasicMaterial({ color: '#a5c8d5', transparent: true, opacity: 0.65 })
+    for (let lane = 0; lane <= VENUE.trackLanes; lane += 1) {
+      const radius = VENUE.trackRadius + lane * VENUE.trackLaneWidth
+      const points = capsuleShape(radius, VENUE.trackStraight).getPoints(128).map((point) => new THREE.Vector3(point.x, 0.075, -point.y))
+      scene.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points), laneMaterial))
+    }
 
     const clickable: THREE.Object3D[] = []
     const sectionObjects = new Map<string, THREE.Mesh[]>()
     const sectionMaterials = new Map<string, THREE.MeshStandardMaterial[]>()
     const baseColors = new Map<string, THREE.Color>()
-
     const registerSection = (id: string, mesh: THREE.Mesh, material: THREE.MeshStandardMaterial) => {
       mesh.userData.sectionId = id
       clickable.push(mesh)
@@ -163,104 +253,215 @@ export default function Venue3D(props: Props) {
     for (const section of SECTIONS) {
       const baseColor = new THREE.Color(section.color)
       baseColors.set(section.id, baseColor)
-      if (section.kind === 'field') {
-        const material = new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.7, metalness: 0.08, emissive: baseColor, emissiveIntensity: 0.04 })
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(section.width, 0.22, section.depth), material)
-        mesh.position.set(section.x, 0.04, section.z)
-        mesh.receiveShadow = true
-        scene.add(mesh)
-        registerSection(section.id, mesh, material)
+      const material = new THREE.MeshStandardMaterial({
+        color: baseColor,
+        roughness: 0.76,
+        metalness: 0.04,
+        emissive: baseColor,
+        emissiveIntensity: 0.025,
+        transparent: true,
+        opacity: section.kind === 'field' ? 0.86 : 0.68,
+      })
+      const mesh = section.kind === 'field'
+        ? new THREE.Mesh(new THREE.BoxGeometry(section.width, 0.2, section.depth), material)
+        : new THREE.Mesh(wedgeGeometry(section), material)
+      if (section.kind === 'field') mesh.position.set(section.x, 0.14, section.z)
+      mesh.receiveShadow = true
+      scene.add(mesh)
+      registerSection(section.id, mesh, material)
+    }
+
+    const concrete = new THREE.MeshStandardMaterial({ color: '#75838a', roughness: 0.88, metalness: 0.08, side: THREE.DoubleSide })
+    const midFascia = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 5.4, 128, 1, true), concrete)
+    midFascia.scale.set(71.5, 1, 109)
+    midFascia.position.y = 18
+    scene.add(midFascia)
+    const upperFascia = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 5.2, 128, 1, true), concrete)
+    upperFascia.scale.set(90, 1, 130)
+    upperFascia.position.y = 38.5
+    scene.add(upperFascia)
+
+    const facade = new THREE.Mesh(
+      new THREE.CylinderGeometry(1, 1, 34, 128, 1, true),
+      new THREE.MeshStandardMaterial({ color: '#283b46', roughness: 0.55, metalness: 0.55, transparent: true, opacity: 0.32, side: THREE.DoubleSide }),
+    )
+    facade.scale.set(99, 1, 137)
+    facade.position.y = 17
+    scene.add(facade)
+
+    const roof = new THREE.Mesh(
+      roofGeometry(88, 126, 108, 148),
+      new THREE.MeshStandardMaterial({ color: '#aebcc1', roughness: 0.48, metalness: 0.62, side: THREE.DoubleSide }),
+    )
+    roof.castShadow = true
+    roof.receiveShadow = true
+    scene.add(roof)
+
+    const trussPoints: THREE.Vector3[] = []
+    const cablePoints: THREE.Vector3[] = []
+    const mastCount = 32
+    for (let index = 0; index < mastCount; index += 1) {
+      const angle = (index / mastCount) * Math.PI * 2
+      const nextAngle = ((index + 0.5) / mastCount) * Math.PI * 2
+      const inner = new THREE.Vector3(Math.sin(angle) * 88, 41, Math.cos(angle) * 126)
+      const outer = new THREE.Vector3(Math.sin(angle) * 108, 48.5, Math.cos(angle) * 148)
+      const middle = new THREE.Vector3(Math.sin(nextAngle) * 98, 43.5, Math.cos(nextAngle) * 137)
+      trussPoints.push(inner, outer, inner, middle, middle, outer)
+      const mastTop = new THREE.Vector3(Math.sin(angle) * 116, 60, Math.cos(angle) * 157)
+      cablePoints.push(mastTop, outer, mastTop, new THREE.Vector3(Math.sin(angle) * 94, 43, Math.cos(angle) * 134))
+    }
+    scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(trussPoints), new THREE.LineBasicMaterial({ color: '#3c4c53', transparent: true, opacity: 0.78 })))
+    scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(cablePoints), new THREE.LineBasicMaterial({ color: '#9aabb2', transparent: true, opacity: 0.72 })))
+
+    const mastGeometry = new THREE.CylinderGeometry(0.24, 0.42, 60, 8)
+    const mastMaterial = new THREE.MeshStandardMaterial({ color: '#9cabb1', roughness: 0.52, metalness: 0.68 })
+    const masts = new THREE.InstancedMesh(mastGeometry, mastMaterial, mastCount)
+    const dummy = new THREE.Object3D()
+    for (let index = 0; index < mastCount; index += 1) {
+      const angle = (index / mastCount) * Math.PI * 2
+      dummy.position.set(Math.sin(angle) * 116, 30, Math.cos(angle) * 157)
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.set(1, 1, 1)
+      dummy.updateMatrix()
+      masts.setMatrixAt(index, dummy.matrix)
+    }
+    scene.add(masts)
+
+    const columnCount = 40
+    const columns = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.65, 0.9, 41, 8), concrete, columnCount)
+    for (let index = 0; index < columnCount; index += 1) {
+      const angle = (index / columnCount) * Math.PI * 2
+      dummy.position.set(Math.sin(angle) * 94, 20.5, Math.cos(angle) * 132)
+      dummy.updateMatrix()
+      columns.setMatrixAt(index, dummy.matrix)
+    }
+    scene.add(columns)
+
+    const seatData: SeatInstance[] = []
+    for (const section of SECTIONS) {
+      if (section.kind === 'stand') {
+        const config = STAND_TIERS[section.tier || 0]
+        const columnsPerSection = section.tier === 0 ? 12 : 10
+        for (let row = 0; row < config.rows; row += 1) {
+          const ratio = (row + 0.5) / config.rows
+          const rx = THREE.MathUtils.lerp(config.innerRx, config.outerRx, ratio)
+          const rz = THREE.MathUtils.lerp(config.innerRz, config.outerRz, ratio)
+          const y = THREE.MathUtils.lerp(config.innerY, config.outerY, ratio) + 0.3
+          for (let column = 0; column < columnsPerSection; column += 1) {
+            const angle = section.angle! + ((column + 0.5) / columnsPerSection - 0.5) * section.span! * 0.86
+            seatData.push({ sectionId: section.id, kind: 'stand', x: Math.sin(angle) * rx, y, z: Math.cos(angle) * rz, angle })
+          }
+        }
       } else {
-        const rows = 4
+        const rows = Math.max(7, Math.floor(section.depth / 1.35))
+        const columnsPerSection = Math.max(8, Math.floor(section.width / 1.15))
         for (let row = 0; row < rows; row += 1) {
-          const offset = (row - 1.5) * 1.25
-          const rx = (section.tier === 0 ? 41 : 48) + offset
-          const rz = (section.tier === 0 ? 34 : 41) + offset
-          const top = 2.8 + row * 0.82 + (section.tier || 0) * 3.4
-          const material = new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.8, metalness: 0.04, emissive: baseColor, emissiveIntensity: 0.025 })
-          const mesh = new THREE.Mesh(new THREE.BoxGeometry(section.width, top, 1.34), material)
-          mesh.position.set(Math.sin(section.angle!) * rx, top / 2 - 0.02, Math.cos(section.angle!) * rz + 5)
-          mesh.rotation.y = section.angle!
-          mesh.castShadow = true
-          mesh.receiveShadow = true
-          scene.add(mesh)
-          registerSection(section.id, mesh, material)
+          for (let column = 0; column < columnsPerSection; column += 1) {
+            seatData.push({
+              sectionId: section.id,
+              kind: 'field',
+              x: section.x + ((column + 0.5) / columnsPerSection - 0.5) * section.width * 0.9,
+              y: 0.48,
+              z: section.z + ((row + 0.5) / rows - 0.5) * section.depth * 0.9,
+              angle: 0,
+            })
+          }
         }
       }
     }
 
-    const chairGeometry = new THREE.BoxGeometry(0.48, 0.48, 0.48)
-    const chairMaterial = new THREE.MeshStandardMaterial({ color: '#63717b', roughness: 0.9 })
-    const headGeometry = new THREE.SphereGeometry(0.19, 6, 5)
-    const headMaterial = new THREE.MeshStandardMaterial({ color: '#26343e', roughness: 1 })
-    const fieldSections = SECTIONS.filter((section) => section.kind === 'field')
-    const chairCount = fieldSections.length * 48
-    const chairs = new THREE.InstancedMesh(chairGeometry, chairMaterial, chairCount)
-    const heads = new THREE.InstancedMesh(headGeometry, headMaterial, chairCount)
-    const dummy = new THREE.Object3D()
+    const chairSeat = new THREE.BoxGeometry(0.52, 0.13, 0.48)
+    const chairBack = new THREE.BoxGeometry(0.52, 0.48, 0.1)
+    chairBack.translate(0, 0.25, 0.2)
+    const chairGeometry = mergeGeometries([chairSeat, chairBack])!
+    chairSeat.dispose()
+    chairBack.dispose()
+    const chairMaterial = new THREE.MeshStandardMaterial({ color: '#d1e0e3', roughness: 0.88 })
+    const chairs = new THREE.InstancedMesh(chairGeometry, chairMaterial, seatData.length)
+    const baseSeatColors: THREE.Color[] = []
     const random = seededRandom(20261114)
-    let seatIndex = 0
-    for (const section of fieldSections) {
-      for (let row = 0; row < 8; row += 1) {
-        for (let col = 0; col < 6; col += 1) {
-          const x = section.x + (col - 2.5) * (section.width / 7)
-          const z = section.z + (row - 3.5) * (section.depth / 9)
-          dummy.position.set(x, 0.45, z)
-          dummy.rotation.set(0, 0, 0)
-          dummy.updateMatrix()
-          chairs.setMatrixAt(seatIndex, dummy.matrix)
-          dummy.position.set(x, 1.05 + random() * 0.15, z)
-          dummy.updateMatrix()
-          heads.setMatrixAt(seatIndex, dummy.matrix)
-          seatIndex += 1
-        }
-      }
+    seatData.forEach((seat, index) => {
+      dummy.position.set(seat.x, seat.y, seat.z)
+      dummy.rotation.set(0, seat.angle, 0)
+      dummy.scale.set(1, 1, 1)
+      dummy.updateMatrix()
+      chairs.setMatrixAt(index, dummy.matrix)
+      const base = seat.kind === 'stand'
+        ? new THREE.Color(random() > 0.22 ? '#83adbb' : '#c5d9dc')
+        : new THREE.Color('#65747b')
+      baseSeatColors.push(base)
+      chairs.setColorAt(index, base)
+    })
+    scene.add(chairs)
+
+    const fieldSeats = seatData.filter((seat, index) => seat.kind === 'field' && index % 2 === 0)
+    const heads = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(0.18, 8, 6),
+      new THREE.MeshStandardMaterial({ color: '#26333a', roughness: 1 }),
+      fieldSeats.length,
+    )
+    fieldSeats.forEach((seat, index) => {
+      dummy.position.set(seat.x, 1.16 + random() * 0.12, seat.z)
+      dummy.updateMatrix()
+      heads.setMatrixAt(index, dummy.matrix)
+    })
+    scene.add(heads)
+    const updateHeads = (eye?: THREE.Vector3) => {
+      fieldSeats.forEach((seat, index) => {
+        const tooClose = eye ? Math.hypot(seat.x - eye.x, seat.z - eye.z) < 3 : false
+        dummy.position.set(seat.x, 1.16, seat.z)
+        dummy.rotation.set(0, 0, 0)
+        dummy.scale.setScalar(tooClose ? 0 : 1)
+        dummy.updateMatrix()
+        heads.setMatrixAt(index, dummy.matrix)
+      })
+      heads.instanceMatrix.needsUpdate = true
     }
-    chairs.castShadow = true
-    scene.add(chairs, heads)
 
     const stage = new THREE.Group()
-    const stageMaterial = new THREE.MeshStandardMaterial({ color: '#7f909b', roughness: 0.5, metalness: 0.55 })
-    const darkMetal = new THREE.MeshStandardMaterial({ color: '#16232c', roughness: 0.48, metalness: 0.72 })
-    const stageBase = new THREE.Mesh(new THREE.BoxGeometry(32, 2.4, 9), stageMaterial)
-    stageBase.position.set(0, 1.2, -23)
+    const stageMaterial = new THREE.MeshStandardMaterial({ color: '#87979e', roughness: 0.48, metalness: 0.55 })
+    const darkMetal = new THREE.MeshStandardMaterial({ color: '#14232b', roughness: 0.48, metalness: 0.72 })
+    const stageBase = new THREE.Mesh(new THREE.BoxGeometry(44, 2.2, 12), stageMaterial)
+    stageBase.position.set(0, 1.1, -54)
     stageBase.castShadow = true
     stage.add(stageBase)
-    const backWall = new THREE.Mesh(new THREE.BoxGeometry(29, 12, 1), darkMetal)
-    backWall.position.set(0, 7.5, -27)
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(41, 15, 1), darkMetal)
+    backWall.position.set(0, 9.2, -60)
     stage.add(backWall)
-    const screen = new THREE.Mesh(
-      new THREE.PlaneGeometry(25, 9.4),
-      new THREE.MeshBasicMaterial({ map: makeScreenTexture(), toneMapped: false }),
-    )
-    screen.position.set(0, 7.8, -26.45)
+    const screenTexture = makeScreenTexture()
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(37, 12), new THREE.MeshBasicMaterial({ map: screenTexture, toneMapped: false }))
+    screen.position.set(0, 9.4, -59.45)
     stage.add(screen)
-    const catwalk = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.2, 12), stageMaterial)
-    catwalk.position.set(0, 0.6, -13.5)
+    const catwalk = new THREE.Mesh(new THREE.BoxGeometry(5, 1.3, 28), stageMaterial)
+    catwalk.position.set(0, 0.65, -34)
     stage.add(catwalk)
-    const thrust = new THREE.Mesh(new THREE.BoxGeometry(10, 1.2, 4), stageMaterial)
-    thrust.position.set(0, 0.6, -7.7)
+    const thrust = new THREE.Mesh(new THREE.BoxGeometry(12, 1.3, 5), stageMaterial)
+    thrust.position.set(0, 0.65, -18.5)
     stage.add(thrust)
-    const booth = new THREE.Mesh(new THREE.BoxGeometry(7, 2.1, 4), darkMetal)
-    booth.position.set(0, 1.05, 24)
+    const booth = new THREE.Mesh(new THREE.BoxGeometry(8, 2.2, 5), darkMetal)
+    booth.position.set(-32, 1.1, 12)
     stage.add(booth)
-    for (const x of [-15.2, 15.2]) {
-      const speaker = new THREE.Mesh(new THREE.BoxGeometry(1.3, 8, 1.5), darkMetal)
-      speaker.position.set(x, 5, -20)
+    for (const x of [-23, 23]) {
+      const speaker = new THREE.Mesh(new THREE.BoxGeometry(1.6, 10, 1.8), darkMetal)
+      speaker.position.set(x, 6, -51)
       stage.add(speaker)
+      const sideScreen = new THREE.Mesh(new THREE.PlaneGeometry(7, 11), new THREE.MeshBasicMaterial({ map: screenTexture, toneMapped: false }))
+      sideScreen.position.set(x * 0.88, 8.5, -56)
+      sideScreen.rotation.y = x < 0 ? 0.15 : -0.15
+      stage.add(sideScreen)
     }
-    const stripMaterial = new THREE.MeshBasicMaterial({ color: '#4ce9fa', toneMapped: false })
-    for (const x of [-14, -7, 0, 7, 14]) {
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.13, 8.6), stripMaterial)
-      strip.position.set(x, 2.44, -23)
+    const stripMaterial = new THREE.MeshBasicMaterial({ color: '#55e9f4', toneMapped: false })
+    for (const x of [-20, -10, 0, 10, 20]) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 11.4), stripMaterial)
+      strip.position.set(x, 2.24, -54)
       stage.add(strip)
     }
     scene.add(stage)
 
-    for (const x of [-12, 0, 12]) {
-      const spot = new THREE.SpotLight('#59dff2', 75, 80, Math.PI * 0.17, 0.65, 1.4)
-      spot.position.set(x, 16, -24)
-      spot.target.position.set(x * 0.3, 0, 4)
+    for (const x of [-16, 0, 16]) {
+      const spot = new THREE.SpotLight('#69e1ed', 130, 180, Math.PI * 0.16, 0.7, 1.4)
+      spot.position.set(x, 19, -54)
+      spot.target.position.set(x * 0.3, 0, -4)
       scene.add(spot, spot.target)
     }
 
@@ -287,8 +488,19 @@ export default function Venue3D(props: Props) {
     let transitioning = false
     let selected = ''
     let immersiveNow = false
+    let activePrice: number | null = null
     let currentZoom = propsRef.current.zoom
     let baseFov = 62
+
+    const updateChairColors = () => {
+      seatData.forEach((seat, index) => {
+        const section = SECTIONS.find((item) => item.id === seat.sectionId)!
+        const isSelected = seat.sectionId === selected
+        const isDimmed = activePrice !== null && section.price !== activePrice && !isSelected
+        chairs.setColorAt(index, isSelected ? new THREE.Color('#8df3fa') : isDimmed ? new THREE.Color('#243842') : baseSeatColors[index])
+      })
+      if (chairs.instanceColor) chairs.instanceColor.needsUpdate = true
+    }
 
     const applyZoom = () => {
       const baseRadians = THREE.MathUtils.degToRad(baseFov)
@@ -311,22 +523,23 @@ export default function Venue3D(props: Props) {
 
     const overview = () => {
       immersiveNow = false
+      updateHeads()
       controls.enabled = true
       controls.enableZoom = true
       controls.enableRotate = true
       const portrait = mount.clientWidth / mount.clientHeight < 0.8
       camera.fov = portrait ? 50 : 42
       camera.updateProjectionMatrix()
-      moveCamera(portrait ? new THREE.Vector3(112, 94, 132) : new THREE.Vector3(80, 70, 94), new THREE.Vector3(0, 2, 3))
+      moveCamera(portrait ? new THREE.Vector3(310, 260, 370) : new THREE.Vector3(185, 160, 230), new THREE.Vector3(0, portrait ? -15 : 10, -4))
     }
 
     const focusSection = (id: string) => {
       const section = SECTIONS.find((item) => item.id === id)
       if (!section || immersiveNow) return
-      const radial = new THREE.Vector3(section.x, 0, section.z - 2).normalize()
-      const position = new THREE.Vector3(section.x, section.kind === 'stand' ? 25 : 20, section.z)
-        .add(radial.multiplyScalar(section.kind === 'stand' ? 23 : 28))
-      moveCamera(position, new THREE.Vector3(section.x * 0.45, 1, section.z * 0.45 - 3))
+      const radial = new THREE.Vector3(section.x, 0, section.z).normalize()
+      const position = new THREE.Vector3(section.x, section.kind === 'stand' ? 48 : 30, section.z)
+        .add(radial.multiplyScalar(section.kind === 'stand' ? 42 : 38))
+      moveCamera(position, new THREE.Vector3(section.x * 0.65, section.kind === 'stand' ? 12 : 3, section.z * 0.65 - 4))
     }
 
     const select = (id: string, move = true) => {
@@ -334,25 +547,25 @@ export default function Venue3D(props: Props) {
       for (const [sectionId, materials] of sectionMaterials) {
         const isSelected = sectionId === id
         materials.forEach((material) => {
-          material.emissive.set(isSelected ? '#7cecff' : baseColors.get(sectionId)!)
-          material.emissiveIntensity = isSelected ? 0.65 : 0.03
+          material.emissive.set(isSelected ? '#8cecf3' : baseColors.get(sectionId)!)
+          material.emissiveIntensity = isSelected ? 0.7 : 0.025
+          material.opacity = isSelected ? 0.92 : activePrice !== null && SECTIONS.find((item) => item.id === sectionId)!.price !== activePrice ? 0.14 : sectionId.startsWith('VIP') || sectionId.startsWith('A') || sectionId.startsWith('B') ? 0.86 : 0.68
         })
       }
+      updateChairColors()
       if (move) focusSection(id)
     }
 
     const filter = (price: number | null) => {
+      activePrice = price
       for (const section of SECTIONS) {
         const visible = price === null || price === section.price || section.id === selected
-        sectionObjects.get(section.id)?.forEach((mesh) => {
-          mesh.visible = visible
-          const materials = sectionMaterials.get(section.id)!
-          materials.forEach((material) => {
-            material.transparent = price !== null && section.price !== price
-            material.opacity = material.transparent ? 0.24 : 1
-          })
+        sectionObjects.get(section.id)?.forEach((mesh) => { mesh.visible = true })
+        sectionMaterials.get(section.id)?.forEach((material) => {
+          material.opacity = visible ? (section.id === selected ? 0.92 : section.kind === 'field' ? 0.86 : 0.68) : 0.14
         })
       }
+      updateChairColors()
     }
 
     const seatView = (positionName: SeatPosition) => {
@@ -360,21 +573,12 @@ export default function Venue3D(props: Props) {
       if (!section) return
       immersiveNow = true
       controls.enabled = false
-      baseFov = section.kind === 'stand' ? 52 : 62
+      baseFov = section.kind === 'stand' ? 55 : 62
       applyZoom()
-      const rowOffset = positionName === 'front' ? -0.28 : positionName === 'back' ? 0.28 : 0
-      let eye: THREE.Vector3
-      if (section.kind === 'field') {
-        eye = new THREE.Vector3(section.x, 1.62, section.z + section.depth * rowOffset)
-      } else {
-        const row = positionName === 'front' ? 0 : positionName === 'back' ? 3 : 1.5
-        const offset = (row - 1.5) * 1.25
-        const rx = (section.tier === 0 ? 41 : 48) + offset
-        const rz = (section.tier === 0 ? 34 : 41) + offset
-        const top = 2.8 + row * 0.82 + (section.tier || 0) * 3.4
-        eye = new THREE.Vector3(Math.sin(section.angle!) * rx, top + 1.45, Math.cos(section.angle!) * rz + 5)
-      }
-      moveCamera(eye, new THREE.Vector3(0, 5.2, -22))
+      const estimate = getViewEstimate(section, positionName)
+      const eye = new THREE.Vector3(estimate.eye.x, estimate.eye.y, estimate.eye.z)
+      updateHeads(eye)
+      moveCamera(eye, new THREE.Vector3(0, 7, -53))
     }
 
     apiRef.current = {
@@ -438,12 +642,13 @@ export default function Venue3D(props: Props) {
       renderer.domElement.removeEventListener('pointerup', onPointerUp)
       controls.dispose()
       scene.traverse((object) => {
-        if (object instanceof THREE.Mesh) {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.LineSegments) {
           object.geometry.dispose()
           const materials = Array.isArray(object.material) ? object.material : [object.material]
           materials.forEach((material) => material.dispose())
         }
       })
+      screenTexture.dispose()
       renderer.dispose()
       renderer.domElement.remove()
       apiRef.current = null

@@ -1,23 +1,30 @@
 import { useMemo, useState } from 'react'
-import { SECTIONS } from '../data'
+import { SECTIONS, STAND_TIERS, VENUE } from '../data'
 
 const CX = 400
 const CY = 350
-const SX = 6
-const SY = 5.7
+const SX = 2.65
+const SY = 2.25
 
 function point(rx: number, rz: number, angle: number) {
   return [CX + Math.sin(angle) * rx * SX, CY + Math.cos(angle) * rz * SY]
 }
 
-function ringPath(rx: number, rz: number, angle: number, span: number, thickness: number) {
+function ringPath(rxInner: number, rzInner: number, rxOuter: number, rzOuter: number, angle: number, span: number) {
   const a0 = angle - span / 2
   const a1 = angle + span / 2
-  const outer0 = point(rx + thickness / 2, rz + thickness / 2, a0)
-  const outer1 = point(rx + thickness / 2, rz + thickness / 2, a1)
-  const inner1 = point(rx - thickness / 2, rz - thickness / 2, a1)
-  const inner0 = point(rx - thickness / 2, rz - thickness / 2, a0)
-  return `M ${outer0.join(' ')} A ${(rx + thickness / 2) * SX} ${(rz + thickness / 2) * SY} 0 0 1 ${outer1.join(' ')} L ${inner1.join(' ')} A ${(rx - thickness / 2) * SX} ${(rz - thickness / 2) * SY} 0 0 0 ${inner0.join(' ')} Z`
+  const outer0 = point(rxOuter, rzOuter, a0)
+  const outer1 = point(rxOuter, rzOuter, a1)
+  const inner1 = point(rxInner, rzInner, a1)
+  const inner0 = point(rxInner, rzInner, a0)
+  return `M ${outer0.join(' ')} A ${rxOuter * SX} ${rzOuter * SY} 0 0 1 ${outer1.join(' ')} L ${inner1.join(' ')} A ${rxInner * SX} ${rzInner * SY} 0 0 0 ${inner0.join(' ')} Z`
+}
+
+function capsulePath(radius: number, straight: number) {
+  const r = radius * SX
+  const half = (straight / 2) * SY
+  const rz = radius * SY
+  return `M ${CX + r} ${CY - half} L ${CX + r} ${CY + half} A ${r} ${rz} 0 0 1 ${CX - r} ${CY + half} L ${CX - r} ${CY - half} A ${r} ${rz} 0 0 1 ${CX + r} ${CY - half} Z`
 }
 
 type Props = {
@@ -31,10 +38,11 @@ export default function SeatMap2D({ selectedId, activePrice, onSelect }: Props) 
   const stands = useMemo(() => SECTIONS.filter((section) => section.kind === 'stand'), [])
   const fields = useMemo(() => SECTIONS.filter((section) => section.kind === 'field'), [])
   const hoveredSection = SECTIONS.find((section) => section.id === hovered)
+  const outerTrack = VENUE.trackRadius + VENUE.trackLanes * VENUE.trackLaneWidth
 
   return (
     <div className="seat-map-2d">
-      <svg viewBox="0 0 800 690" role="img" aria-label="演唱会交互座位分区图">
+      <svg viewBox="0 0 800 700" role="img" aria-label="演唱会交互座位分区估算图">
         <defs>
           <filter id="selected-glow" x="-60%" y="-60%" width="220%" height="220%">
             <feGaussianBlur stdDeviation="5" result="blur" />
@@ -51,8 +59,7 @@ export default function SeatMap2D({ selectedId, activePrice, onSelect }: Props) 
           {stands.map((section) => {
             const dimmed = activePrice !== null && activePrice !== section.price
             const selected = selectedId === section.id
-            const rx = section.tier === 0 ? 41 : 48
-            const rz = section.tier === 0 ? 34 : 41
+            const config = STAND_TIERS[section.tier || 0]
             return (
               <g
                 key={section.id}
@@ -67,11 +74,11 @@ export default function SeatMap2D({ selectedId, activePrice, onSelect }: Props) 
                 onMouseLeave={() => setHovered(null)}
               >
                 <path
-                  d={ringPath(rx, rz, section.angle!, 0.235, 5.2)}
+                  d={ringPath(config.innerRx, config.innerRz, config.outerRx, config.outerRz, section.angle!, section.span!)}
                   fill={section.color}
-                  fillOpacity={selected ? 1 : 0.72}
+                  fillOpacity={selected ? 0.96 : 0.68}
                   stroke={selected ? '#d9fbff' : '#09111e'}
-                  strokeWidth={selected ? 3 : 1.6}
+                  strokeWidth={selected ? 3 : 1.25}
                   filter={selected ? 'url(#selected-glow)' : undefined}
                 />
                 <text x={CX + section.x * SX} y={CY + section.z * SY + 3} textAnchor="middle" className="stand-label">
@@ -82,14 +89,19 @@ export default function SeatMap2D({ selectedId, activePrice, onSelect }: Props) 
           })}
         </g>
 
+        <g className="map-track" aria-hidden="true">
+          <path d={capsulePath(outerTrack, VENUE.trackStraight)} fill="#123e59" stroke="#6b98aa" strokeOpacity="0.45" />
+          <path d={capsulePath(VENUE.trackRadius, VENUE.trackStraight)} fill="#102b2a" stroke="#7c9b9d" strokeOpacity="0.3" />
+        </g>
+
         <g className="map-stage" aria-label="舞台">
-          <rect x="286" y="142" width="228" height="100" rx="4" fill="#c8d3dc" />
-          <rect x="300" y="154" width="200" height="55" rx="2" fill="url(#stage-screen)" />
-          <text x="400" y="181" textAnchor="middle" className="stage-title">ENDLESS</text>
-          <text x="400" y="198" textAnchor="middle" className="stage-subtitle">POSSIBILITY</text>
-          <rect x="384" y="242" width="32" height="88" fill="#aebdca" />
-          <rect x="360" y="316" width="80" height="26" rx="3" fill="#c8d3dc" />
-          <text x="400" y="266" textAnchor="middle" className="stage-name" transform="rotate(-90 400 266)">舞台</text>
+          <rect x={CX - 22 * SX} y={CY + (-60) * SY} width={44 * SX} height={12 * SY} rx="3" fill="#c8d3dc" />
+          <rect x={CX - 18.5 * SX} y={CY + (-59) * SY} width={37 * SX} height={8 * SY} rx="2" fill="url(#stage-screen)" />
+          <text x={CX} y={CY + (-54.5) * SY} textAnchor="middle" className="stage-title">ENDLESS</text>
+          <text x={CX} y={CY + (-51.5) * SY} textAnchor="middle" className="stage-subtitle">POSSIBILITY</text>
+          <rect x={CX - 2.5 * SX} y={CY + (-48) * SY} width={5 * SX} height={28 * SY} fill="#aebdca" />
+          <rect x={CX - 6 * SX} y={CY + (-21) * SY} width={12 * SX} height={5 * SY} rx="2" fill="#c8d3dc" />
+          <text x={CX + 18} y={CY + (-34) * SY} textAnchor="middle" className="stage-name" transform={`rotate(-90 ${CX + 18} ${CY + (-34) * SY})`}>延伸台</text>
         </g>
 
         <g className="map-field">
@@ -116,11 +128,11 @@ export default function SeatMap2D({ selectedId, activePrice, onSelect }: Props) 
                   y={y}
                   width={section.width * SX}
                   height={section.depth * SY}
-                  rx="3"
+                  rx="2"
                   fill={section.color}
-                  fillOpacity={selected ? 1 : 0.8}
+                  fillOpacity={selected ? 1 : 0.82}
                   stroke={selected ? '#e5fcff' : '#09111e'}
-                  strokeWidth={selected ? 3 : 1.8}
+                  strokeWidth={selected ? 3 : 1.4}
                   filter={selected ? 'url(#selected-glow)' : undefined}
                 />
                 <text x={CX + section.x * SX} y={CY + section.z * SY + 4} textAnchor="middle" className="field-label">
@@ -132,8 +144,8 @@ export default function SeatMap2D({ selectedId, activePrice, onSelect }: Props) 
         </g>
 
         <g className="map-control-booth">
-          <rect x="365" y="475" width="70" height="30" rx="3" fill="#d5dde2" />
-          <text x="400" y="495" textAnchor="middle">控台</text>
+          <rect x={CX + (-36) * SX} y={CY + 9.5 * SY} width={8 * SX} height={5 * SY} rx="2" fill="#d5dde2" />
+          <text x={CX + (-32) * SX} y={CY + 12.8 * SY} textAnchor="middle">控台</text>
         </g>
       </svg>
       <div className="map-orientation"><span>舞台方向</span><i /></div>
