@@ -317,6 +317,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .view-distance > span svg { color: var(--accent); }
 .view-distance strong { color: var(--text-bright); font: 600 25px/1.25 ui-monospace, "SFMono-Regular", Consolas, monospace; letter-spacing: -.04em; }
 .view-distance small { color: var(--text-soft); font-size: 9px; }
+.view-distance em { margin-top: 3px; color: var(--accent); font-size: 8px; font-style: normal; letter-spacing: .03em; }
 .look-hint { position: absolute; top: calc(50% + 30px); left: 50%; transform: translateX(-50%); padding: 6px 10px; display: flex; align-items: center; gap: 6px; border: 1px solid #ffffff1c; border-radius: 20px; background: #07101c8c; color: var(--text-soft); font-size: 10px; white-space: nowrap; backdrop-filter: blur(6px); text-shadow: 0 1px 8px #07101c; }
 .look-hint svg { color: var(--accent); }
 .camera-active .view-distance { top: 126px; }

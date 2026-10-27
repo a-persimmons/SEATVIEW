@@ -7,6 +7,8 @@ import {
   getSeatViewEstimate, getViewEstimate, type SeatLocation, type SeatPosition,
 } from '../data'
 
+const HUMAN_VISION_FOV = 58
+
 type Props = {
   selectedId: string
   selectedSeat: SeatLocation | null
@@ -448,6 +450,91 @@ export default function Venue3D(props: Props) {
     }
     scene.add(stage)
 
+    const performers = [
+      { x: -14, y: 2.2, z: -53, color: '#d7edf2' },
+      { x: -7, y: 2.2, z: -52.4, color: '#55dbe8' },
+      { x: 0, y: 2.2, z: -52.8, color: '#eef6f4' },
+      { x: 7, y: 2.2, z: -52.4, color: '#e45c68' },
+      { x: 14, y: 2.2, z: -53, color: '#d7edf2' },
+      { x: 0, y: 1.3, z: -35, color: '#55dbe8' },
+      { x: 0, y: 1.3, z: -26, color: '#eef6f4' },
+    ]
+    const performerHeads = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(0.16, 10, 8),
+      new THREE.MeshStandardMaterial({ color: '#bda393', roughness: 0.92 }),
+      performers.length,
+    )
+    const performerBodies = new THREE.InstancedMesh(
+      new THREE.CapsuleGeometry(0.2, 0.55, 3, 7),
+      new THREE.MeshStandardMaterial({ roughness: 0.82 }),
+      performers.length,
+    )
+    const performerLimbs = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.055, 0.07, 0.7, 6),
+      new THREE.MeshStandardMaterial({ color: '#17242d', roughness: 0.9 }),
+      performers.length * 4,
+    )
+    performers.forEach((performer, index) => {
+      dummy.position.set(performer.x, performer.y + 1.68, performer.z)
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.set(1, 1, 1)
+      dummy.updateMatrix()
+      performerHeads.setMatrixAt(index, dummy.matrix)
+      dummy.position.set(performer.x, performer.y + 1.08, performer.z)
+      dummy.updateMatrix()
+      performerBodies.setMatrixAt(index, dummy.matrix)
+      performerBodies.setColorAt(index, new THREE.Color(performer.color))
+      for (let sideIndex = 0; sideIndex < 2; sideIndex += 1) {
+        const side = sideIndex === 0 ? -1 : 1
+        dummy.position.set(performer.x + side * 0.1, performer.y + 0.36, performer.z)
+        dummy.rotation.set(0, 0, side * 0.06)
+        dummy.updateMatrix()
+        performerLimbs.setMatrixAt(index * 4 + sideIndex, dummy.matrix)
+        const raisedArm = index % 3 === 1 && side === 1
+        dummy.position.set(performer.x + side * 0.28, performer.y + (raisedArm ? 1.42 : 1.12), performer.z)
+        dummy.rotation.set(0, 0, side * (raisedArm ? 2.35 : 0.22))
+        dummy.updateMatrix()
+        performerLimbs.setMatrixAt(index * 4 + 2 + sideIndex, dummy.matrix)
+      }
+    })
+    performerBodies.castShadow = true
+    scene.add(performerHeads, performerBodies, performerLimbs)
+
+    const drumMaterial = new THREE.MeshStandardMaterial({ color: '#263d49', metalness: 0.5, roughness: 0.42 })
+    const cymbalMaterial = new THREE.MeshStandardMaterial({ color: '#b99a52', metalness: 0.72, roughness: 0.35 })
+    const bassDrum = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.58, 0.62, 16), drumMaterial)
+    bassDrum.rotation.x = Math.PI / 2
+    bassDrum.position.set(-11, 2.82, -55.2)
+    stage.add(bassDrum)
+    for (const x of [-11.65, -10.35]) {
+      const tom = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.42, 12), drumMaterial)
+      tom.position.set(x, 3.35, -55.1)
+      const cymbal = new THREE.Mesh(new THREE.CylinderGeometry(0.64, 0.64, 0.035, 16), cymbalMaterial)
+      cymbal.position.set(x, 4.05, -55.6)
+      const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.35, 6), darkMetal)
+      stand.position.set(x, 3.37, -55.6)
+      stage.add(tom, cymbal, stand)
+    }
+    const keyboard = new THREE.Mesh(new THREE.BoxGeometry(3, 0.16, 0.8), darkMetal)
+    keyboard.position.set(11, 3.25, -54.7)
+    const keyboardStand = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1, 0.12), stageMaterial)
+    keyboardStand.position.set(11, 2.7, -54.7)
+    stage.add(keyboard, keyboardStand)
+
+    const beamMaterial = new THREE.MeshBasicMaterial({
+      color: '#64dce8', transparent: true, opacity: 0.045,
+      depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+    })
+    const beams = new THREE.InstancedMesh(new THREE.ConeGeometry(4.5, 17, 20, 1, true), beamMaterial, 3)
+    ;[-16, 0, 16].forEach((x, index) => {
+      dummy.position.set(x, 10.5, -54)
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.set(1, 1, 1)
+      dummy.updateMatrix()
+      beams.setMatrixAt(index, dummy.matrix)
+    })
+    scene.add(beams)
+
     for (const x of [-16, 0, 16]) {
       const spot = new THREE.SpotLight('#69e1ed', 130, 180, Math.PI * 0.16, 0.7, 1.4)
       spot.position.set(x, 19, -54)
@@ -637,7 +724,7 @@ export default function Venue3D(props: Props) {
       lookingAround = false
       renderer.domElement.style.cursor = 'grab'
       controls.enabled = false
-      baseFov = section.kind === 'stand' ? 55 : 62
+      baseFov = HUMAN_VISION_FOV
       applyZoom()
       const estimate = activeSeat?.sectionId === section.id
         ? getSeatViewEstimate(section, activeSeat)

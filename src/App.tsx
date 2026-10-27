@@ -157,7 +157,7 @@ export default function App() {
         <div><CalendarDays size={15} /><span>2026.11.14</span><b>周六</b></div>
         <div><Clock3 size={15} /><span>18:00</span></div>
         <div className="venue-line"><MapPin size={15} /><span>河北奥林匹克体育中心体育场</span></div>
-        <button className="simulation-badge" onClick={() => setModal('data')}><Ruler size={13} />公开资料校准 · 区域级估算</button>
+        <button className="simulation-badge" onClick={() => setModal('data')}><Ruler size={13} />公开资料校准 · 人眼 5.0 参考</button>
       </div>
 
       <div className="mobile-prices" aria-label="按票档筛选">
@@ -273,6 +273,7 @@ export default function App() {
                   <span><Ruler size={14} />预估至主舞台</span>
                   <strong>{viewEstimate.label}</strong>
                   <small>估算区间 {viewEstimate.rangeLabel}</small>
+                  <em>人眼 5.0 参考 · 58° 中心视野</em>
                 </div>
                 <div className="look-hint"><MousePointer2 size={13} /><span>{cameraMode ? '拖动调整角度 · 点椅子换座' : '拖动环视 · 点击椅子换座'}</span></div>
 
@@ -280,7 +281,7 @@ export default function App() {
                   <>
                     <div className="view-reticle" aria-hidden="true"><i /><i /></div>
                     <div className="view-bottom">
-                      <div className="view-caption"><span>ESTIMATED VIEW</span><strong>{selected.direction}</strong><small>公开资料与分区图推算 · 非现场实拍</small></div>
+                      <div className="view-caption"><span>ESTIMATED VIEW</span><strong>{selected.direction}</strong><small>人眼 5.0 角尺度参考 · 非现场实拍</small></div>
                       <div className="position-switch dark">
                         {(['front', 'middle', 'back'] as SeatPosition[]).map((position) => (
                           <button key={position} className={!selectedSeat && seatPosition === position ? 'active' : ''} onClick={() => choosePosition(position)}>{getPositionLabel(position)}</button>
@@ -392,7 +393,8 @@ export default function App() {
                   <div><dt>公开参数</dt><dd>约 6 万坐席；罩棚建筑高度 50.423 米；地上五层、地下一层。</dd></div>
                   <div><dt>尺度基准</dt><dd>以标准 400 米田径跑道及公开场馆影像校准场地比例、双层看台、罩棚、桅杆与拉索。</dd></div>
                   <div><dt>演出布局</dt><dd>舞台、延伸台、控台与票区位置依据所提供的主办方分区示意图估算。</dd></div>
-                  <div><dt>距离算法</dt><dd>从区域内前／中／后代表观察点计算至主舞台前沿的空间距离，并以区间表达估算误差。</dd></div>
+                  <div><dt>距离算法</dt><dd>从所选模拟座位或区域内前／中／后代表观察点计算至主舞台前沿的空间距离，并以区间表达估算误差。</dd></div>
+                  <div><dt>视觉参考</dt><dd>第一人称采用坐姿眼高与约 58° 中心清晰视野，人物按约 1.75 米高度显示。5.0 视力仅作正常角分辨能力参考，不以统一模糊模拟，实际效果受屏幕尺寸、分辨率与观看距离影响。</dd></div>
                   <div><dt>精度边界</dt><dd>未使用 CAD／BIM、官方排座坐标或本场舞台搭建图；可点击座位为程序生成的模拟排号，实际遮挡与尺寸以现场为准。</dd></div>
                 </dl>
                 <div className="source-links">
