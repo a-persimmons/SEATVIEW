@@ -3,11 +3,9 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import {
-  SECTIONS, STAND_TIERS, VENUE, getSeatCoordinates, getSeatCounts,
+  ACTIVE_SIMULATION, SECTIONS, STAND_TIERS, VENUE, getSeatCoordinates, getSeatCounts,
   getSeatViewEstimate, getViewEstimate, type SeatLocation, type SeatPosition,
 } from '../data'
-
-const HUMAN_VISION_FOV = 58
 
 type Props = {
   selectedId: string
@@ -63,16 +61,17 @@ function makeScreenTexture() {
   for (let x = 0; x < canvas.width; x += 64) {
     context.beginPath(); context.moveTo(x, 0); context.lineTo(x, canvas.height); context.stroke()
   }
+  const isDefault = ACTIVE_SIMULATION.meta.id === 'sim_hebei_endless_20261114'
   context.fillStyle = '#e2fcff'
   context.textAlign = 'center'
-  context.font = '700 94px Arial, sans-serif'
-  context.fillText('ENDLESS', 512, 168)
-  context.fillStyle = '#5de7f5'
-  context.font = '500 43px Arial, sans-serif'
-  context.fillText('POSSIBILITY', 512, 250)
+  context.font = '700 94px Arial, "Microsoft YaHei", sans-serif'
+  context.fillText(isDefault ? 'ENDLESS' : ACTIVE_SIMULATION.meta.shortTitle, 512, 168)
+  context.fillStyle = ACTIVE_SIMULATION.theme.stageAccent
+  context.font = '500 43px Arial, "Microsoft YaHei", sans-serif'
+  context.fillText(isDefault ? 'POSSIBILITY' : ACTIVE_SIMULATION.meta.artist, 512, 250)
   context.fillStyle = '#9bb4bf'
   context.font = '24px sans-serif'
-  context.fillText('SUPER CONCERT · 2026', 512, 310)
+  context.fillText(ACTIVE_SIMULATION.meta.series, 512, 310)
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   return texture
@@ -430,8 +429,9 @@ export default function Venue3D(props: Props) {
     const catwalk = new THREE.Mesh(new THREE.BoxGeometry(4, 1.3, 28), stageMaterial)
     catwalk.position.set(0, 0.65, -34)
     stage.add(catwalk)
-    const booth = new THREE.Mesh(new THREE.BoxGeometry(8, 2.2, 6), stageMaterial)
-    booth.position.set(0, 1.1, 0)
+    const controlBooth = ACTIVE_SIMULATION.layout.controlBooth
+    const booth = new THREE.Mesh(new THREE.BoxGeometry(controlBooth.width, 2.2, controlBooth.depth), stageMaterial)
+    booth.position.set(controlBooth.x, 1.1, controlBooth.z)
     stage.add(booth)
     for (const x of [-23, 23]) {
       const speaker = new THREE.Mesh(new THREE.BoxGeometry(1.6, 10, 1.8), darkMetal)
@@ -724,7 +724,7 @@ export default function Venue3D(props: Props) {
       lookingAround = false
       renderer.domElement.style.cursor = 'grab'
       controls.enabled = false
-      baseFov = HUMAN_VISION_FOV
+      baseFov = ACTIVE_SIMULATION.render.humanVisionFov
       applyZoom()
       const estimate = activeSeat?.sectionId === section.id
         ? getSeatViewEstimate(section, activeSeat)

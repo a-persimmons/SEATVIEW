@@ -1,26 +1,12 @@
+import type { PriceLevel, Section, Simulation, StandTier, VenueModel } from '@contracts/simulation'
+import defaultSimulationJson from '@contracts/default-simulation.json'
+
+export type { Section, Simulation }
 export type ViewMode = '2d' | '3d'
 export type SeatPosition = 'front' | 'middle' | 'back'
 export type SeatLocation = { sectionId: string, row: number, column: number }
 
-export type Section = {
-  id: string
-  name: string
-  price: number
-  color: string
-  kind: 'field' | 'stand'
-  x: number
-  z: number
-  width: number
-  depth: number
-  angle?: number
-  span?: number
-  tier?: number
-  direction: string
-  summary: string
-  note: string
-}
-
-export const VENUE = {
+const DEFAULT_VENUE: VenueModel = {
   stageFrontZ: -48,
   stageCenterZ: -54,
   stageTargetY: 4,
@@ -31,12 +17,12 @@ export const VENUE = {
   trackLanes: 8,
 }
 
-export const STAND_TIERS = [
+const DEFAULT_STAND_TIERS: StandTier[] = [
   { innerRx: 56, innerRz: 92, outerRx: 69, outerRz: 106, innerY: 3.2, outerY: 15.2, rows: 16 },
   { innerRx: 74, innerRz: 112, outerRx: 88, outerRz: 128, innerY: 21, outerY: 36, rows: 18 },
 ]
 
-export const PRICE_LEVELS = [
+const DEFAULT_PRICE_LEVELS: PriceLevel[] = [
   { price: 888, color: '#f04444', label: 'VIP 内场', hint: '靠近舞台核心区' },
   { price: 788, color: '#f48a22', label: 'A 区内场', hint: '内场前部与中部区域' },
   { price: 688, color: '#f4d82d', label: 'B 区内场', hint: '内场后侧左右两区' },
@@ -73,7 +59,7 @@ const fieldSections: Section[] = fieldLayout.map(([name, x, z, width, depth, pri
   price,
   direction,
   summary,
-  color: PRICE_LEVELS.find((item) => item.price === price)!.color,
+  color: DEFAULT_PRICE_LEVELS.find((item) => item.price === price)!.color,
   kind: 'field',
   note: price === 888 ? '内场为平地座位，后排可能受到前排观众影响。' : '建议选择区域内靠前位置，减少前排遮挡影响。',
 }))
@@ -100,7 +86,7 @@ function getStandSummary(price: number) {
 const standSections: Section[] = []
 for (let tier = 0; tier < 2; tier += 1) {
   const count = tier === 0 ? 40 : 22
-  const config = STAND_TIERS[tier]
+  const config = DEFAULT_STAND_TIERS[tier]
   for (let index = 0; index < count; index += 1) {
     const angle = 2.4 - (index / (count - 1)) * 4.8
     const span = (4.8 / (count - 1)) * 0.91
@@ -116,7 +102,7 @@ for (let tier = 0; tier < 2; tier += 1) {
       id: String(id),
       name: `${id}区`,
       price,
-      color: PRICE_LEVELS.find((item) => item.price === price)!.color,
+      color: DEFAULT_PRICE_LEVELS.find((item) => item.price === price)!.color,
       kind: 'stand',
       x,
       z,
@@ -132,8 +118,24 @@ for (let tier = 0; tier < 2; tier += 1) {
   }
 }
 
-export const SECTIONS: Section[] = [...fieldSections, ...standSections]
-export const DEFAULT_SECTION = SECTIONS.find((section) => section.id === 'A3')!
+const DEFAULT_SECTIONS: Section[] = [...fieldSections, ...standSections]
+export const DEFAULT_SIMULATION = defaultSimulationJson as Simulation
+
+export let VENUE: VenueModel = { ...DEFAULT_VENUE }
+export let STAND_TIERS: StandTier[] = DEFAULT_STAND_TIERS.map((tier) => ({ ...tier }))
+export let PRICE_LEVELS: PriceLevel[] = DEFAULT_PRICE_LEVELS.map((level) => ({ ...level }))
+export let SECTIONS: Section[] = DEFAULT_SECTIONS.map((section) => ({ ...section }))
+export let DEFAULT_SECTION = SECTIONS.find((section) => section.id === 'A3')!
+export let ACTIVE_SIMULATION: Simulation = DEFAULT_SIMULATION
+
+export function hydrateSimulation(simulation: Simulation) {
+  ACTIVE_SIMULATION = simulation
+  VENUE = { ...simulation.venue.model }
+  STAND_TIERS = simulation.venue.standTiers.map((tier) => ({ ...tier }))
+  PRICE_LEVELS = simulation.layout.priceLevels.map((level) => ({ ...level }))
+  SECTIONS = simulation.layout.sections.map((section) => ({ ...section }))
+  DEFAULT_SECTION = SECTIONS.find((section) => section.id === simulation.layout.defaultSectionId) || SECTIONS[0]
+}
 
 export function getSectionsByPrice(price: number | null) {
   return price === null ? SECTIONS : SECTIONS.filter((section) => section.price === price)
@@ -148,8 +150,8 @@ export function getSeatCounts(section: Section) {
     return { rows: STAND_TIERS[section.tier || 0].rows, columns: section.tier === 0 ? 10 : 8 }
   }
   return {
-    rows: Math.max(7, Math.floor(section.depth / 1.35)),
-    columns: Math.max(8, Math.floor(section.width / 1.15)),
+    rows: Math.max(7, Math.floor(section.depth / ACTIVE_SIMULATION.render.fieldRowSpacing)),
+    columns: Math.max(8, Math.floor(section.width / ACTIVE_SIMULATION.render.fieldColumnSpacing)),
   }
 }
 
@@ -187,15 +189,18 @@ export type ViewEstimate = {
   rangeLabel: string
 }
 
-const roundToFive = (value: number) => Math.max(5, Math.round(value / 5) * 5)
+const roundToFive = (value: number) => {
+  const step = ACTIVE_SIMULATION.render.distanceRounding
+  return Math.max(step, Math.round(value / step) * step)
+}
 
 export function getViewEstimate(section: Section, position: SeatPosition): ViewEstimate {
   const ratio = position === 'front' ? 0.12 : position === 'back' ? 0.88 : 0.5
-  let eye = { x: section.x, y: 1.62, z: section.z }
+  let eye = { x: section.x, y: ACTIVE_SIMULATION.render.seatedEyeHeight, z: section.z }
   if (section.kind === 'field') {
     eye = {
       x: section.x,
-      y: 1.62,
+      y: ACTIVE_SIMULATION.render.seatedEyeHeight,
       z: section.z + (ratio - 0.5) * section.depth,
     }
   } else {
@@ -209,7 +214,9 @@ export function getViewEstimate(section: Section, position: SeatPosition): ViewE
     }
   }
   const actualDistance = Math.hypot(eye.x, eye.y - VENUE.stageTargetY, eye.z - VENUE.stageFrontZ)
-  const uncertainty = section.kind === 'field' ? 5 : 10
+  const uncertainty = section.kind === 'field'
+    ? ACTIVE_SIMULATION.render.fieldUncertainty
+    : ACTIVE_SIMULATION.render.standUncertainty
   const nominal = roundToFive(actualDistance)
   const min = roundToFive(actualDistance - uncertainty)
   const max = roundToFive(actualDistance + uncertainty)
@@ -220,11 +227,13 @@ export function getSeatViewEstimate(section: Section, seat: SeatLocation): ViewE
   const coordinates = getSeatCoordinates(section, seat)
   const eye = {
     x: coordinates.x,
-    y: section.kind === 'field' ? 1.62 : coordinates.y + 0.95,
+    y: section.kind === 'field' ? ACTIVE_SIMULATION.render.seatedEyeHeight : coordinates.y + 0.95,
     z: coordinates.z,
   }
   const actualDistance = Math.hypot(eye.x, eye.y - VENUE.stageTargetY, eye.z - VENUE.stageFrontZ)
-  const uncertainty = section.kind === 'field' ? 5 : 10
+  const uncertainty = section.kind === 'field'
+    ? ACTIVE_SIMULATION.render.fieldUncertainty
+    : ACTIVE_SIMULATION.render.standUncertainty
   const nominal = roundToFive(actualDistance)
   const min = roundToFive(actualDistance - uncertainty)
   const max = roundToFive(actualDistance + uncertainty)

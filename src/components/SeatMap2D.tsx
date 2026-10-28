@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { SECTIONS, STAND_TIERS, VENUE } from '../data'
+import { ACTIVE_SIMULATION, SECTIONS, STAND_TIERS, VENUE } from '../data'
 
 const CX = 400
 const CY = 350
@@ -97,8 +97,8 @@ export default function SeatMap2D({ selectedId, activePrice, onSelect }: Props) 
         <g className="map-stage" aria-label="舞台">
           <rect x={CX - 22 * SX} y={CY + (-60) * SY} width={44 * SX} height={12 * SY} rx="3" fill="#c8d3dc" />
           <rect x={CX - 18.5 * SX} y={CY + (-59) * SY} width={37 * SX} height={8 * SY} rx="2" fill="url(#stage-screen)" />
-          <text x={CX} y={CY + (-54.5) * SY} textAnchor="middle" className="stage-title">ENDLESS</text>
-          <text x={CX} y={CY + (-51.5) * SY} textAnchor="middle" className="stage-subtitle">POSSIBILITY</text>
+          <text x={CX} y={CY + (-54.5) * SY} textAnchor="middle" className="stage-title">{ACTIVE_SIMULATION.meta.id === 'sim_hebei_endless_20261114' ? 'ENDLESS' : ACTIVE_SIMULATION.meta.shortTitle}</text>
+          <text x={CX} y={CY + (-51.5) * SY} textAnchor="middle" className="stage-subtitle">{ACTIVE_SIMULATION.meta.id === 'sim_hebei_endless_20261114' ? 'POSSIBILITY' : ACTIVE_SIMULATION.meta.artist}</text>
           <rect x={CX - 2 * SX} y={CY + (-48) * SY} width={4 * SX} height={28 * SY} fill="#aebdca" />
           <text x={CX + 16} y={CY + (-34) * SY} textAnchor="middle" className="stage-name" transform={`rotate(-90 ${CX + 16} ${CY + (-34) * SY})`}>延伸台</text>
         </g>
@@ -143,8 +143,15 @@ export default function SeatMap2D({ selectedId, activePrice, onSelect }: Props) 
         </g>
 
         <g className="map-control-booth">
-          <rect x={CX - 4 * SX} y={CY - 3 * SY} width={8 * SX} height={6 * SY} rx="2" fill="#d5dde2" />
-          <text x={CX} y={CY + 1 * SY} textAnchor="middle">控台</text>
+          <rect
+            x={CX + (ACTIVE_SIMULATION.layout.controlBooth.x - ACTIVE_SIMULATION.layout.controlBooth.width / 2) * SX}
+            y={CY + (ACTIVE_SIMULATION.layout.controlBooth.z - ACTIVE_SIMULATION.layout.controlBooth.depth / 2) * SY}
+            width={ACTIVE_SIMULATION.layout.controlBooth.width * SX}
+            height={ACTIVE_SIMULATION.layout.controlBooth.depth * SY}
+            rx="2"
+            fill="#d5dde2"
+          />
+          <text x={CX + ACTIVE_SIMULATION.layout.controlBooth.x * SX} y={CY + ACTIVE_SIMULATION.layout.controlBooth.z * SY + SY} textAnchor="middle">控台</text>
         </g>
       </svg>
       <div className="map-orientation"><span>舞台方向</span><i /></div>

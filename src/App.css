@@ -51,7 +51,7 @@ button { -webkit-tap-highlight-color: transparent; }
   background: oklch(0.18 0.026 245 / 0.94);
   z-index: 20;
 }
-.brand-block { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.brand-block { display: flex; align-items: center; gap: 10px; flex-shrink: 0; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; text-decoration: none; }
 .brand-mark { color: var(--accent); display: grid; place-items: center; }
 .brand-name { display: none; font: 700 15px/1.1 "Arial Narrow", "PingFang SC", sans-serif; letter-spacing: .12em; }
 .brand-name span { display: block; margin-top: 5px; color: var(--text-dim); font: 500 10px/1.2 "PingFang SC", sans-serif; letter-spacing: .12em; }
