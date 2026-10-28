@@ -2,14 +2,14 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { HttpBindings } from "@hono/node-server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
-import { appRouter } from "./router";
-import { createContext } from "./context";
-import { env } from "./lib/env";
-import { createOAuthCallbackHandler } from "./kimi/auth";
+import { appRouter } from "../server/router";
+import { createContext } from "../server/context";
+import { env } from "../server/lib/env";
+import { createOAuthCallbackHandler } from "../server/kimi/auth";
 import { Paths } from "@contracts/constants";
-import { log } from "./lib/logger";
-import { handleClientLog } from "./lib/clientlog";
-import { REQUEST_ID_HEADER, runWithRequestId } from "./lib/requestcontext";
+import { log } from "../server/lib/logger";
+import { handleClientLog } from "../server/lib/clientlog";
+import { REQUEST_ID_HEADER, runWithRequestId } from "../server/lib/requestcontext";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 
@@ -95,9 +95,9 @@ app.onError((err, c) => {
 
 export default app;
 
-if (env.isProduction) {
+if (env.isProduction && !process.env.VERCEL) {
   const { serve } = await import("@hono/node-server");
-  const { serveStaticFiles } = await import("./lib/vite");
+  const { serveStaticFiles } = await import("../server/lib/vite");
   serveStaticFiles(app);
 
   const port = parseInt(process.env.PORT || "3000");
