@@ -1,4 +1,4 @@
-import { generateObject, generateText } from "ai";
+import { generateObject, generateText, streamObject } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -29,6 +29,12 @@ function provider(config: ModelConfig) {
     apiKey: config.apiKey,
     supportsStructuredOutputs: true,
   });
+}
+
+function modelProviderOptions(modelName: string) {
+  return modelName.startsWith("kimi-")
+    ? { openaiCompatible: { reasoningEffort: "low" } }
+    : undefined;
 }
 
 function normalizeVenueName(value: string) {
@@ -195,6 +201,7 @@ export const builderRouter = createRouter({
     try {
       const generated = await generateObject({
         model: provider(config)(visionModel),
+        providerOptions: modelProviderOptions(visionModel),
         schema: recognizedEventSchema,
         system: "你是演唱会宣传图信息提取器。只提取图片中明确可见的演出名称、演出主题或艺人、城市、场馆全称、日期和开始时间，不分析座位布局，不联网，不猜测。无法确认的文本字段返回空字符串。日期统一为 YYYY-MM-DD，时间统一为 24 小时制 HH:mm。场馆必须尽量保留完整正式名称，不得把城市名当作场馆名。",
         messages: [{
@@ -239,24 +246,41 @@ export const builderRouter = createRouter({
 
     const id = `sim_${crypto.randomUUID().replaceAll("-", "")}`;
     const slug = `event-${Date.now().toString(36)}`;
-    const generated = await generateObject({
-      model: provider(config)(visionModel),
-      schema: simulationSchema,
-      system: `你是演唱会场馆模拟器的数据建模器。根据用户确认的演出信息、已检索公开建筑资料和一张主办方 2D 分区图，生成可直接渲染的完整 JSON。不得生成座椅逐点坐标，座椅由客户端规则生成。舞台位于负 Z 方向，所有分区坐标使用米。票档颜色必须彼此可区分，文字主题颜色保持高对比。公开建筑参数只能来自给定资料，不确定的尺度使用明确估算，不得编造官方排号。`,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "text", text: `用户已确认的演出信息：${JSON.stringify({ title: input.title, artist: input.artist, venueName: input.venueName, city: input.city, date: input.date, time: input.time, existingVenueId: input.existingVenueId })}\n固定 ID：${id}；固定 slug：${slug}；状态 draft；版本 1；更新时间 ${new Date().toISOString()}。\n${venue ? `复用场馆基础模型：${JSON.stringify(venue)}` : `用户确认后检索到的新场馆公开资料：${JSON.stringify(input.research)}`}\n请读取图片中的全部票区、票档、舞台、延伸台和控台相对关系，生成完整 simulation。${venue ? "必须原样复用给定场馆的 id、公开资料、建筑模型和看台参数，只为本场生成新的 layout 与 theme。" : `新场馆 venue.id 使用 venue_${crypto.randomUUID().replaceAll("-", "")}。`}meta.aliases 包含常见场馆别名。render 默认使用 58 度中心视野、1.62 米坐姿眼高、1.75 米人物高度、5 米距离取整。` },
-          { type: "image", image: input.imageBase64, mediaType: input.imageType },
-        ],
-      }],
-    });
+    let generatedObject: Simulation;
+    try {
+      const generated = streamObject({
+        model: provider(config)(visionModel),
+        providerOptions: modelProviderOptions(visionModel),
+        schema: simulationSchema,
+        system: `你是演唱会场馆模拟器的数据建模器。根据用户确认的演出信息、已检索公开建筑资料和一张主办方 2D 分区图，生成可直接渲染的完整 JSON。不得生成座椅逐点坐标，座椅由客户端规则生成。舞台位于负 Z 方向，所有分区坐标使用米。票档颜色必须彼此可区分，文字主题颜色保持高对比。公开建筑参数只能来自给定资料，不确定的尺度使用明确估算，不得编造官方排号。`,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: `用户已确认的演出信息：${JSON.stringify({ title: input.title, artist: input.artist, venueName: input.venueName, city: input.city, date: input.date, time: input.time, existingVenueId: input.existingVenueId })}\n固定 ID：${id}；固定 slug：${slug}；状态 draft；版本 1；更新时间 ${new Date().toISOString()}。\n${venue ? `复用场馆基础模型：${JSON.stringify(venue)}` : `用户确认后检索到的新场馆公开资料：${JSON.stringify(input.research)}`}\n请读取图片中的全部票区、票档、舞台、延伸台和控台相对关系，生成完整 simulation。${venue ? "必须原样复用给定场馆的 id、公开资料、建筑模型和看台参数，只为本场生成新的 layout 与 theme。" : `新场馆 venue.id 使用 venue_${crypto.randomUUID().replaceAll("-", "")}。`}meta.aliases 包含常见场馆别名。render 默认使用 58 度中心视野、1.62 米坐姿眼高、1.75 米人物高度、5 米距离取整。` },
+            { type: "image", image: input.imageBase64, mediaType: input.imageType },
+          ],
+        }],
+        maxRetries: 1,
+        abortSignal: AbortSignal.timeout(300_000),
+      });
+      for await (const partial of generated.partialObjectStream) void partial;
+      generatedObject = await generated.object;
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : String(reason);
+      const timedOut = /timeout|timed out|aborted/i.test(detail);
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: timedOut
+          ? "模型生成超过 5 分钟，已停止本次请求，请重试或改用响应更快的视觉模型"
+          : `模型生成连接失败：${detail}`,
+      });
+    }
 
     return simulationSchema.parse({
-      ...generated.object,
+      ...generatedObject,
       ...(venue ? { venue } : {}),
       meta: {
-        ...generated.object.meta,
+        ...generatedObject.meta,
         id,
         slug,
         status: "draft",
