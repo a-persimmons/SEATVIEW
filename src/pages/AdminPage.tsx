@@ -1,19 +1,15 @@
 import { useEffect, useState } from 'react'
-import { ArrowRight, Check, Database, FileImage, KeyRound, LoaderCircle, LogOut, Search, Settings2, Sparkles, Upload, Eye } from 'lucide-react'
+import { ArrowRight, Check, FileImage, KeyRound, LoaderCircle, LogOut, Search, Settings2, Sparkles, Upload, Eye } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import type { Simulation } from '@contracts/simulation'
 import { trpc } from '@/providers/trpc'
 import { useAuth } from '@/hooks/useAuth'
+import { loadModelConfig, saveModelConfig } from '@/lib/local-model-config'
 import SiteHeader from '@/components/SiteHeader'
-
-const defaultConfig = {
-  baseUrl: '', apiKey: '', modelName: '', visionModelName: '',
-  searchProvider: 'none' as 'none' | 'tavily', searchBaseUrl: '', searchApiKey: '',
-}
 
 function readableError(message: string) {
   if (message.includes('SUPABASE_NOT_CONFIGURED')) return '尚未连接 Supabase。请先在服务端配置 SUPABASE_URL 与 SUPABASE_SECRET_KEY。'
-  if (message.includes('MODEL_NOT_CONFIGURED')) return '请先保存模型配置，再开始构建。'
+  if (message.includes('MODEL_NOT_CONFIGURED')) return '请先在当前浏览器保存模型配置，再开始构建。'
   if (message.includes('SEARCH_NOT_CONFIGURED')) return '新场馆需要公开资料搜索，请配置独立搜索服务；已有场馆可直接复用。'
   return message
 }
@@ -32,7 +28,7 @@ export default function AdminPage() {
   const isAdmin = auth.user?.role === 'admin'
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = searchParams.get('tab') === 'config' ? 'config' : 'build'
-  const [config, setConfig] = useState(defaultConfig)
+  const [config, setConfig] = useState(loadModelConfig)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [file, setFile] = useState<File | null>(null)
@@ -42,25 +38,11 @@ export default function AdminPage() {
     title: '', artist: '', venueName: '河北奥林匹克体育中心体育场', city: '石家庄',
     date: '2026-11-14', time: '18:00', existingVenueId: 'venue_hebei_olympic',
   })
-  const configQuery = trpc.builder.config.useQuery(undefined, { enabled: isAdmin, retry: false })
   const venues = trpc.builder.venues.useQuery(undefined, { enabled: isAdmin, retry: false })
   const builds = trpc.builder.listAll.useQuery(undefined, { enabled: isAdmin, retry: false })
-  const saveConfig = trpc.builder.saveConfig.useMutation()
   const testConfig = trpc.builder.testConfig.useMutation()
   const build = trpc.builder.build.useMutation()
   const publish = trpc.builder.publish.useMutation()
-
-  useEffect(() => {
-    if (!configQuery.data) return
-    setConfig((current) => ({
-      ...current,
-      baseUrl: configQuery.data.baseUrl,
-      modelName: configQuery.data.modelName,
-      visionModelName: configQuery.data.visionModelName,
-      searchProvider: configQuery.data.searchProvider,
-      searchBaseUrl: configQuery.data.searchBaseUrl,
-    }))
-  }, [configQuery.data])
 
   useEffect(() => {
     if (!file) { setPreview(''); return }
@@ -74,31 +56,35 @@ export default function AdminPage() {
     return <div className="admin-gate"><KeyRound /><h1>需要管理员权限</h1><p>模型配置与模拟器发布仅对管理员开放。</p><Link to="/">返回首页</Link></div>
   }
 
-  const submitConfig = async (event: React.FormEvent) => {
+  const submitConfig = (event: React.FormEvent) => {
     event.preventDefault(); setNotice(''); setError('')
     try {
-      await saveConfig.mutateAsync(config)
-      setConfig((current) => ({ ...current, apiKey: '', searchApiKey: '' }))
-      setNotice('模型与搜索配置已安全保存。')
-      await configQuery.refetch()
+      saveModelConfig(config)
+      setNotice('模型与搜索配置已保存到当前浏览器，不会写入 Supabase。')
     } catch (reason) { setError(readableError(reason instanceof Error ? reason.message : String(reason))) }
   }
 
   const runTest = async () => {
     setNotice(''); setError('')
     try {
-      const response = await testConfig.mutateAsync()
+      const response = await testConfig.mutateAsync(config)
       setNotice(`模型连接成功${response.response ? `：${response.response}` : '。'}`)
     } catch (reason) { setError(readableError(reason instanceof Error ? reason.message : String(reason))) }
   }
 
   const submitBuild = async (event: React.FormEvent) => {
     event.preventDefault(); setNotice(''); setError(''); setResult(null)
+    if (!config.baseUrl || !config.apiKey || !config.modelName) {
+      setSearchParams({ tab: 'config' }, { replace: true })
+      setError('上传建模前，请先填写并保存当前浏览器的模型配置。')
+      return
+    }
     if (!file) { setError('请选择主办方提供的 2D 分区图。'); return }
     if (file.size > 12 * 1024 * 1024) { setError('图片不能超过 12 MB。'); return }
     try {
       const simulation = await build.mutateAsync({
         ...form,
+        modelConfig: config,
         imageBase64: await fileToBase64(file),
         imageType: file.type as 'image/png' | 'image/jpeg' | 'image/webp',
       })
@@ -132,7 +118,6 @@ export default function AdminPage() {
           <button role="tab" aria-selected={tab === 'config'} className={tab === 'config' ? 'active' : ''} onClick={() => { setSearchParams({ tab: 'config' }, { replace: true }); setError(''); setNotice('') }}><Settings2 size={16} />模型与搜索</button>
         </div>
         {(notice || error) && <div className={`admin-notice ${error ? 'is-error' : ''}`} role="status">{error || notice}</div>}
-        {configQuery.error && <div className="admin-notice is-error">{readableError(configQuery.error.message)}</div>}
 
         {tab === 'build' ? (
           <div className="builder-layout">
@@ -171,10 +156,10 @@ export default function AdminPage() {
         ) : (
           <form className="config-form" onSubmit={submitConfig}>
             <section className="admin-section">
-              <div className="admin-section-title"><KeyRound /><div><h2>OpenAI 兼容模型</h2><p>密钥仅保存在服务端，读取分区图需要视觉能力。</p></div></div>
+              <div className="admin-section-title"><KeyRound /><div><h2>OpenAI 兼容模型</h2><p>配置只保存在当前浏览器，读取分区图需要视觉能力。</p></div></div>
               <div className="form-grid">
                 <label className="wide"><span>Base URL</span><input required type="url" value={config.baseUrl} onChange={(e) => setConfig({ ...config, baseUrl: e.target.value })} placeholder="https://your-provider.example/v1" /></label>
-                <label className="wide"><span>API Key {configQuery.data?.hasApiKey && <small>已配置，留空则保留原密钥</small>}</span><input type="password" value={config.apiKey} onChange={(e) => setConfig({ ...config, apiKey: e.target.value })} placeholder={configQuery.data?.hasApiKey ? '••••••••••••' : '仅在服务端保存'} autoComplete="new-password" /></label>
+                <label className="wide"><span>API Key <small>仅保存到当前浏览器</small></span><input required type="password" value={config.apiKey} onChange={(e) => setConfig({ ...config, apiKey: e.target.value })} placeholder="当前浏览器的本地模型密钥" autoComplete="new-password" /></label>
                 <label><span>模型名称</span><input required value={config.modelName} onChange={(e) => setConfig({ ...config, modelName: e.target.value })} placeholder="your-chat-model" /></label>
                 <label><span>视觉模型（可选）</span><input value={config.visionModelName} onChange={(e) => setConfig({ ...config, visionModelName: e.target.value })} placeholder="留空则使用主模型" /></label>
               </div>
@@ -184,11 +169,11 @@ export default function AdminPage() {
               <div className="form-grid">
                 <label><span>搜索服务</span><select value={config.searchProvider} onChange={(e) => setConfig({ ...config, searchProvider: e.target.value as 'none' | 'tavily' })}><option value="none">不配置</option><option value="tavily">Tavily Search</option></select></label>
                 <label><span>自定义接口地址（可选）</span><input type="url" value={config.searchBaseUrl} onChange={(e) => setConfig({ ...config, searchBaseUrl: e.target.value })} placeholder="留空使用服务官方接口" /></label>
-                <label className="wide"><span>Search API Key {configQuery.data?.hasSearchApiKey && <small>已配置，留空则保留</small>}</span><input type="password" value={config.searchApiKey} onChange={(e) => setConfig({ ...config, searchApiKey: e.target.value })} autoComplete="new-password" /></label>
+                <label className="wide"><span>Search API Key <small>仅保存到当前浏览器</small></span><input type="password" value={config.searchApiKey} onChange={(e) => setConfig({ ...config, searchApiKey: e.target.value })} autoComplete="new-password" /></label>
               </div>
             </section>
-            <div className="config-actions"><button type="submit" disabled={saveConfig.isPending}>{saveConfig.isPending ? <LoaderCircle className="spin" /> : <Database />}保存配置</button><button type="button" onClick={runTest} disabled={testConfig.isPending}>{testConfig.isPending ? <LoaderCircle className="spin" /> : <Settings2 />}测试已保存模型</button></div>
-            <p className="security-note"><KeyRound size={14} />API Key 不会进入浏览器响应、模拟 JSON 或公开数据库读取结果。模型和搜索调用按服务商规则计费。</p>
+            <div className="config-actions"><button type="submit"><Check />保存到此浏览器</button><button type="button" onClick={runTest} disabled={testConfig.isPending}>{testConfig.isPending ? <LoaderCircle className="spin" /> : <Settings2 />}测试当前配置</button></div>
+            <p className="security-note"><KeyRound size={14} />配置保存在当前浏览器 localStorage，清除浏览器数据后需重新填写。测试或构建时会随请求临时传给服务端使用，不写入 Supabase、模拟 JSON 或公开响应。模型和搜索调用按服务商规则计费。</p>
           </form>
         )}
       </main>

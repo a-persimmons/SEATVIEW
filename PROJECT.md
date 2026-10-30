@@ -2,7 +2,7 @@
 
 > 文档目的：让后续开发者在不依赖历史聊天记录的情况下，理解这个项目为什么存在、怎样把一张演唱会 2D 分区图变成可交互的 3D 现场、当前已经实现到什么程度，以及继续开发时不能破坏哪些已经确定的成果。
 >
-> 最近更新：2026-10-29  
+> 最近更新：2026-10-30
 > 当前代码基线：GitHub `a-persimmons/SEATVIEW`，`main` 分支，代码提交 `7459994`  
 > 当前品牌：SEATVIEW。中文名“席见”曾被讨论，但尚未正式确认。
 
@@ -85,7 +85,7 @@ SEATVIEW 是一个**演唱会现场座位视角模拟器**：用户先在首页�
 - 不做复杂专业建模编辑器；
 - 不做票务交易；
 - 不在模拟 JSON 中保存每把椅子或所有 3D 顶点；
-- 不让模型密钥、搜索密钥进入前端、公开 API 或模拟 JSON；
+- 不让模型密钥、搜索密钥进入公开 API、模拟 JSON、日志或 Supabase；构建配置只保存在当前浏览器本地；
 - 当前不支持缺少可识别地点信息的纯座位图，不通过猜测场馆来强行构建。
 
 ### 3.3 最重要的既定成果
@@ -103,10 +103,11 @@ SEATVIEW 是一个**演唱会现场座位视角模拟器**：用户先在首页�
 | 搜索列表页 | 已完成 | 查询发布数据，不调用 AI |
 | 通用模拟 JSON | 已完成 | 详情页通过同一份 JSON 驱动场馆、布局、渲染参数和主题 |
 | 参数化 2D／3D 渲染 | 已完成 | 座椅与场景由程序根据配方生成，不是逐点建模 |
-| 后台 AI 构建流程 | 基础代码已实现，输入方式待改 | 当前仍手填演出和场馆信息；既定目标是只上传完整图片并自动提取，另需配置视觉模型、搜索服务和 Supabase |
+| 后台 AI 构建流程 | 基础代码已实现，输入方式待改 | 当前仍手填演出和场馆信息；既定目标是只上传完整图片并自动提取，构建前需在当前浏览器配置视觉模型和搜索服务 |
+| 模型与搜索配置 | 已改为浏览器本地保存 | 公开浏览不读取；测试与构建时临时传给服务端，不写入 Supabase；清除浏览器数据后需重填 |
 | 草稿与发布 | 代码已实现 | 发布后进入首页和搜索；目前没有独立草稿预览页 |
 | 公共用户共建页面 | 尚未实现 | 目前构建入口在管理员后台；共建流程只是产品方向 |
-| Supabase 项目与表结构 | 已创建并验证 | 三张表、RLS、索引和私有 bucket 已就绪 |
+| Supabase 项目与表结构 | 已创建并验证 | `venues`、`simulations` 两张业务表、RLS、索引和私有 bucket 已就绪；原配置表已删除 |
 | 线上 Supabase 连接 | 尚未完成 | Vercel 仍需配置服务端 Supabase 环境变量 |
 | 管理登录生产配置 | 尚未完成 | 需要 Kimi OAuth 和 MySQL 用户表环境 |
 | GitHub | 已推送 | `main` 已包含完整项目 |
@@ -219,6 +220,8 @@ SEATVIEW 是一个**演唱会现场座位视角模拟器**：用户先在首页�
 ```
 
 **完成度说明：以上是已经确定的产品流程，不代表当前代码已经全部按此实现。** 现有后台仍保留手动输入和手动选择复用场馆，具体差距见第一步末。
+
+**配置前置条件：** 只浏览首页、搜索和已发布模拟不需要任何模型配置。上传建模前，构建者必须先在当前浏览器填写并保存 OpenAI 兼容模型与搜索配置。配置保存在 `localStorage`，测试或构建时随请求临时传给服务端使用，不保存到 Supabase。
 
 ### 第一步：上传唯一输入——信息完整的 2D 图
 
@@ -852,23 +855,36 @@ Project Reference：qvohsjquivuorgcjxduk
 API URL：https://qvohsjquivuorgcjxduk.supabase.co
 ```
 
-已创建：
+当前保留：
 
 - `venues`；
 - `simulations`；
-- `model_configs`；
 - 三个查询索引；
 - 私有 bucket `seatview-assets`。
 
+原来的 `model_configs` 已删除。Supabase 不再保存 Base URL、模型名称、模型密钥或搜索密钥，只保存场馆与演出模拟业务数据。
+
 安全状态：
 
-- 三张表均启用 RLS；
+- 两张业务表均启用 RLS；
 - `anon`、`authenticated` 无直接读取权限；
 - 服务端密钥访问；
-- 原图保持私有；
-- 模型配置不会通过公开配置接口返回密钥本身。
+- 原图保持私有。
 
-### 12.2 MySQL：脚手架登录用户体系
+### 12.2 浏览器本地：模型与搜索配置
+
+配置保存在当前浏览器的 `localStorage`，键名为 `seatview.model-config.v1`，包括 Base URL、API Key、模型名称、视觉模型和搜索服务配置。
+
+- 首页、搜索和详情浏览不读取这份配置；
+- 上传构建前必须完成本地配置；
+- “保存到此浏览器”只写本地存储，不调用 Supabase；
+- 测试模型和构建时，配置随本次请求临时传给服务端使用；
+- 服务端不把配置写入数据库、模拟 JSON、公开响应或模型提示词；
+- 配置不会跨浏览器或设备同步，清除浏览器数据后需要重新填写。
+
+这意味着密钥不再只存在于服务端，而是存在于构建者当前浏览器中。后续不能再恢复“密钥仅保存在服务端”的旧文案。
+
+### 12.3 MySQL：脚手架登录用户体系
 
 当前 Kimi 登录和后台管理员仍使用脚手架自带的 MySQL 用户表：
 
@@ -878,7 +894,7 @@ API URL：https://qvohsjquivuorgcjxduk.supabase.co
 
 因此，**配置 Supabase 并不等于后台登录也已经可用**。生产管理功能还需要 MySQL 和 Kimi OAuth 环境。
 
-### 12.3 内置示例：明确的降级数据
+### 12.4 内置示例：明确的降级数据
 
 未配置 Supabase 时：
 
@@ -918,9 +934,7 @@ API URL：https://qvohsjquivuorgcjxduk.supabase.co
 | `simulations.cities` | 公开 | 城市筛选 |
 | `simulations.bySlug` | 公开 | 已发布完整模拟和签名图片 URL |
 | `simulations.save` | 管理员 | 保存完整模拟 |
-| `builder.config` | 管理员 | 读取脱敏模型配置 |
-| `builder.saveConfig` | 管理员 | 保存模型与搜索配置 |
-| `builder.testConfig` | 管理员 | 测试已保存模型 |
+| `builder.testConfig` | 管理员 | 使用请求中携带的当前浏览器配置测试模型，不保存配置 |
 | `builder.venues` | 管理员 | 可复用场馆 |
 | `builder.listAll` | 管理员 | 构建记录 |
 | `builder.build` | 管理员 | 图片与公开资料生成草稿 |
@@ -938,7 +952,7 @@ API URL：https://qvohsjquivuorgcjxduk.supabase.co
 2. 验证公开 API 已切换到 `source: "supabase"`；
 3. 配置 MySQL 与 Kimi OAuth；
 4. 验证管理员登录和权限；
-5. 在后台保存目标视觉模型与搜索服务；
+5. 在后台当前浏览器保存目标视觉模型与搜索服务；
 6. 将构建输入改为只上传完整图片，先把演出与地点提取移到建筑资料搜索之前，并按提取结果自动匹配可复用场馆；
 7. 用一张全新的信息完整图片做真实端到端构建；
 8. 检查信息提取、布局、票档、控台和主题后再发布。
@@ -982,7 +996,7 @@ API URL：https://qvohsjquivuorgcjxduk.supabase.co
 2. **JSON 只保存配方。** 不保存每把椅子、实例矩阵或所有顶点。
 3. **场馆与单场布局保持分离。** 新演出不能无条件覆盖已有场馆模型。
 4. **新构建默认是草稿。** 不允许 AI 输出直接公开发布。
-5. **密钥只在服务端。** 不进入 `VITE_` 变量、前端响应、日志或模拟 JSON。
+5. **构建配置只保存在当前浏览器。** 密钥可以存在于本地存储并在测试／构建请求中临时传输，但不得进入 `VITE_` 变量、Supabase、日志、模拟 JSON、模型提示词或公开响应。
 6. **主题服从可用性。** 票档色、文字对比度和功能色优先于演出主题。
 7. **估算必须明确标识。** 不将模拟排座描述为官方排号。
 8. **站内搜索不调用 AI。** 建筑资料搜索与站内搜索不能混用。
@@ -1009,6 +1023,9 @@ API URL：https://qvohsjquivuorgcjxduk.supabase.co
 
 ### 新 AI 构建验收
 
+- 公开首页、搜索和详情无需模型配置即可浏览；
+- 模型与搜索配置能保存到当前浏览器并在刷新后恢复，不会写入 Supabase；
+- 未配置模型时不能上传构建，会先到配置页；
 - 只上传一张信息完整的图片即可发起构建，不要求重复手填图片中已经展示的演出和地点信息；
 - 缺少可识别地点信息的纯座位图会被明确判定为暂不支持，不会猜测场馆继续构建；
 - 先从图片提取地点，再决定复用已有场馆或搜索新场馆公开资料；
@@ -1044,6 +1061,8 @@ API URL：https://qvohsjquivuorgcjxduk.supabase.co
 |---|---|
 | `contracts/default-simulation.json` | 默认完整模拟配方 |
 | `contracts/simulation.ts` | Zod 契约、类型与摘要转换 |
+| `contracts/model-config.ts` | 浏览器与服务端共用的模型配置契约 |
+| `src/lib/local-model-config.ts` | 当前浏览器配置读取与保存 |
 | `src/data.ts` | JSON 水合、排座规则、座位坐标与距离估算 |
 | `src/pages/SimulatorDetail.tsx` | 已定稿详情与全部交互状态 |
 | `src/components/SeatMap2D.tsx` | SVG 2D 场馆 |
@@ -1053,9 +1072,10 @@ API URL：https://qvohsjquivuorgcjxduk.supabase.co
 | `src/pages/SearchPage.tsx` | 站内搜索 |
 | `src/pages/AdminPage.tsx` | 构建与管理员工具 |
 | `server/simulation-router.ts` | 发布数据、详情与持久化 |
-| `server/builder-router.ts` | 模型配置、公开资料搜索、AI 构建和发布 |
+| `server/builder-router.ts` | 临时使用请求配置、公开资料搜索、AI 构建和发布 |
 | `server/supabase.ts` | 服务端 Supabase 客户端 |
-| `supabase/migrations/202610280001_seatview.sql` | 三张表、索引、RLS 和 bucket |
+| `supabase/migrations/202610280001_seatview.sql` | 初始业务表、索引、RLS 和 bucket |
+| `supabase/migrations/202610300001_remove_model_configs.sql` | 删除数据库模型配置表 |
 | `api/boot.ts` | Hono 生产入口 |
 | `api/index.js` | Vercel 公开 API 入口，复用 `dist/boot.js` |
 | `vercel.json` | Vite 构建、API 和 SPA rewrite |
@@ -1087,7 +1107,7 @@ npm run test
 - Kimi OAuth：`APP_ID`、`APP_SECRET`、`KIMI_AUTH_URL`、`KIMI_OPEN_URL`、`OWNER_UNION_ID`；
 - 前端登录：`VITE_KIMI_AUTH_URL`、`VITE_APP_ID`。
 
-只有明确需要暴露给前端的 OAuth 地址和应用 ID 使用 `VITE_`。Supabase 密钥、模型密钥和搜索密钥绝不能使用 `VITE_`。
+只有明确需要暴露给前端的 OAuth 地址和应用 ID 使用 `VITE_`。Supabase 服务端密钥绝不能使用 `VITE_`；模型和搜索密钥不通过前端环境变量注入，而是由构建者填写并保存在当前浏览器 `localStorage`。
 
 ### 18.3 Vercel 结构注意事项
 

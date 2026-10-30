@@ -4,33 +4,12 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import defaultSimulationJson from "@contracts/default-simulation.json";
 import { simulationSchema, toSimulationSummary, type Simulation } from "@contracts/simulation";
+import { usableModelConfigSchema, type ModelConfig } from "@contracts/model-config";
 import { adminQuery, createRouter } from "./middleware";
 import { getSupabase, isSupabaseConfigured } from "./supabase";
 import { persistSimulation } from "./simulation-router";
 
 const defaultSimulation = simulationSchema.parse(defaultSimulationJson);
-
-const configInput = z.object({
-  baseUrl: z.string().url(),
-  apiKey: z.string().max(500).optional().default(""),
-  modelName: z.string().trim().min(1).max(160),
-  visionModelName: z.string().trim().max(160).optional().default(""),
-  searchProvider: z.enum(["none", "tavily"]),
-  searchBaseUrl: z.string().url().or(z.literal("")).optional().default(""),
-  searchApiKey: z.string().max(500).optional().default(""),
-});
-
-type ModelConfig = z.infer<typeof configInput>;
-
-type ConfigRow = {
-  base_url: string;
-  api_key: string;
-  model_name: string;
-  vision_model_name: string | null;
-  search_provider: "none" | "tavily";
-  search_base_url: string | null;
-  search_api_key: string | null;
-};
 
 function requireSupabase() {
   if (!isSupabaseConfigured()) {
@@ -42,26 +21,6 @@ function requireSupabase() {
   return getSupabase();
 }
 
-async function readConfig(): Promise<ModelConfig | null> {
-  const { data, error } = await requireSupabase()
-    .from("model_configs")
-    .select("base_url,api_key,model_name,vision_model_name,search_provider,search_base_url,search_api_key")
-    .eq("id", "default")
-    .maybeSingle();
-  if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
-  if (!data) return null;
-  const row = data as ConfigRow;
-  return {
-    baseUrl: row.base_url,
-    apiKey: row.api_key,
-    modelName: row.model_name,
-    visionModelName: row.vision_model_name || "",
-    searchProvider: row.search_provider,
-    searchBaseUrl: row.search_base_url || "",
-    searchApiKey: row.search_api_key || "",
-  };
-}
-
 function provider(config: ModelConfig) {
   return createOpenAICompatible({
     name: "seatview-custom-model",
@@ -69,18 +28,6 @@ function provider(config: ModelConfig) {
     apiKey: config.apiKey,
     supportsStructuredOutputs: true,
   });
-}
-
-function publicConfig(config: ModelConfig | null) {
-  return {
-    baseUrl: config?.baseUrl || "",
-    modelName: config?.modelName || "",
-    visionModelName: config?.visionModelName || "",
-    searchProvider: config?.searchProvider || "none",
-    searchBaseUrl: config?.searchBaseUrl || "",
-    hasApiKey: Boolean(config?.apiKey),
-    hasSearchApiKey: Boolean(config?.searchApiKey),
-  };
 }
 
 async function searchVenue(venueName: string, city: string, config: ModelConfig) {
@@ -124,38 +71,16 @@ const buildInput = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   time: z.string().regex(/^\d{2}:\d{2}$/),
   existingVenueId: z.string().optional().default(""),
+  modelConfig: usableModelConfigSchema,
   imageBase64: z.string().min(100).max(18_000_000),
   imageType: z.enum(["image/png", "image/jpeg", "image/webp"]),
 });
 
 export const builderRouter = createRouter({
-  config: adminQuery.query(async () => publicConfig(await readConfig())),
-
-  saveConfig: adminQuery.input(configInput).mutation(async ({ input }) => {
-    const previous = await readConfig();
-    const row = {
-      id: "default",
-      base_url: input.baseUrl,
-      api_key: input.apiKey || previous?.apiKey || "",
-      model_name: input.modelName,
-      vision_model_name: input.visionModelName,
-      search_provider: input.searchProvider,
-      search_base_url: input.searchBaseUrl,
-      search_api_key: input.searchApiKey || previous?.searchApiKey || "",
-      updated_at: new Date().toISOString(),
-    };
-    if (!row.api_key) throw new TRPCError({ code: "BAD_REQUEST", message: "首次保存时需要填写 API Key" });
-    const { error } = await requireSupabase().from("model_configs").upsert(row);
-    if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
-    return { ok: true };
-  }),
-
-  testConfig: adminQuery.mutation(async () => {
-    const config = await readConfig();
-    if (!config) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "MODEL_NOT_CONFIGURED" });
+  testConfig: adminQuery.input(usableModelConfigSchema).mutation(async ({ input }) => {
     try {
       const result = await generateText({
-        model: provider(config)(config.modelName),
+        model: provider(input)(input.modelName),
         prompt: "Reply with OK only.",
         maxOutputTokens: 8,
       });
@@ -202,8 +127,7 @@ export const builderRouter = createRouter({
 
   build: adminQuery.input(buildInput).mutation(async ({ input }) => {
     const supabase = requireSupabase();
-    const config = await readConfig();
-    if (!config?.apiKey) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "MODEL_NOT_CONFIGURED" });
+    const config = input.modelConfig;
     const visionModel = config.visionModelName || config.modelName;
     const reusingDefault = input.existingVenueId === defaultSimulation.venue.id;
     let venue = reusingDefault ? defaultSimulation.venue : null;
@@ -236,7 +160,7 @@ export const builderRouter = createRouter({
       messages: [{
         role: "user",
         content: [
-          { type: "text", text: `演出信息：${JSON.stringify({ ...input, imageBase64: undefined, imageType: undefined })}\n固定 ID：${id}；固定 slug：${slug}；状态 draft；版本 1；更新时间 ${new Date().toISOString()}。\n${venue ? `复用场馆基础模型：${JSON.stringify(venue)}` : `新场馆公开搜索结果：${JSON.stringify(research)}`}\n请读取图片中的全部票区、票档、舞台、延伸台和控台相对关系，生成完整 simulation。${venue ? "必须原样复用给定场馆的 id、公开资料、建筑模型和看台参数，只为本场生成新的 layout 与 theme。" : `新场馆 venue.id 使用 venue_${crypto.randomUUID().replaceAll("-", "")}。`}meta.aliases 包含常见场馆别名。render 默认使用 58 度中心视野、1.62 米坐姿眼高、1.75 米人物高度、5 米距离取整。` },
+          { type: "text", text: `演出信息：${JSON.stringify({ title: input.title, artist: input.artist, venueName: input.venueName, city: input.city, date: input.date, time: input.time, existingVenueId: input.existingVenueId })}\n固定 ID：${id}；固定 slug：${slug}；状态 draft；版本 1；更新时间 ${new Date().toISOString()}。\n${venue ? `复用场馆基础模型：${JSON.stringify(venue)}` : `新场馆公开搜索结果：${JSON.stringify(research)}`}\n请读取图片中的全部票区、票档、舞台、延伸台和控台相对关系，生成完整 simulation。${venue ? "必须原样复用给定场馆的 id、公开资料、建筑模型和看台参数，只为本场生成新的 layout 与 theme。" : `新场馆 venue.id 使用 venue_${crypto.randomUUID().replaceAll("-", "")}。`}meta.aliases 包含常见场馆别名。render 默认使用 58 度中心视野、1.62 米坐姿眼高、1.75 米人物高度、5 米距离取整。` },
           { type: "image", image: input.imageBase64, mediaType: input.imageType },
         ],
       }],
