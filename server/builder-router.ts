@@ -5,7 +5,7 @@ import { TRPCError } from "@trpc/server";
 import defaultSimulationJson from "@contracts/default-simulation.json";
 import { simulationSchema, toSimulationSummary, type Simulation } from "@contracts/simulation";
 import { usableModelConfigSchema, type ModelConfig } from "@contracts/model-config";
-import { adminQuery, createRouter } from "./middleware";
+import { createRouter, publicQuery } from "./middleware";
 import { getSupabase, isSupabaseConfigured } from "./supabase";
 import { persistSimulation } from "./simulation-router";
 
@@ -77,7 +77,7 @@ const buildInput = z.object({
 });
 
 export const builderRouter = createRouter({
-  testConfig: adminQuery.input(usableModelConfigSchema).mutation(async ({ input }) => {
+  testConfig: publicQuery.input(usableModelConfigSchema).mutation(async ({ input }) => {
     try {
       const result = await generateText({
         model: provider(input)(input.modelName),
@@ -90,7 +90,7 @@ export const builderRouter = createRouter({
     }
   }),
 
-  venues: adminQuery.query(async () => {
+  venues: publicQuery.query(async () => {
     const builtIn = {
       id: defaultSimulation.venue.id,
       name: defaultSimulation.venue.name,
@@ -114,7 +114,7 @@ export const builderRouter = createRouter({
     return [builtIn, ...rows.filter((row) => row.id !== builtIn.id)];
   }),
 
-  listAll: adminQuery.query(async () => {
+  listAll: publicQuery.query(async () => {
     if (!isSupabaseConfigured()) return [];
     const { data, error } = await getSupabase()
       .from("simulations")
@@ -125,7 +125,7 @@ export const builderRouter = createRouter({
     return (data as { data: Simulation }[]).map((row) => toSimulationSummary(simulationSchema.parse(row.data)));
   }),
 
-  build: adminQuery.input(buildInput).mutation(async ({ input }) => {
+  build: publicQuery.input(buildInput).mutation(async ({ input }) => {
     const supabase = requireSupabase();
     const config = input.modelConfig;
     const visionModel = config.visionModelName || config.modelName;
@@ -207,7 +207,7 @@ export const builderRouter = createRouter({
     return simulation;
   }),
 
-  publish: adminQuery.input(z.object({ slug: z.string().min(1) })).mutation(async ({ input }) => {
+  publish: publicQuery.input(z.object({ slug: z.string().min(1) })).mutation(async ({ input }) => {
     const { data, error } = await requireSupabase()
       .from("simulations").select("data").eq("slug", input.slug).maybeSingle();
     if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });

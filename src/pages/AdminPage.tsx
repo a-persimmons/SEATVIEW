@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ArrowRight, Check, FileImage, KeyRound, LoaderCircle, LogOut, Search, Settings2, Sparkles, Upload, Eye } from 'lucide-react'
+import { ArrowRight, Check, FileImage, KeyRound, LoaderCircle, Search, Settings2, Sparkles, Upload, Eye } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import type { Simulation } from '@contracts/simulation'
 import { trpc } from '@/providers/trpc'
-import { useAuth } from '@/hooks/useAuth'
 import { loadModelConfig, saveModelConfig } from '@/lib/local-model-config'
 import SiteHeader from '@/components/SiteHeader'
 
@@ -26,8 +25,6 @@ function fileToBase64(file: File) {
 export default function AdminPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = searchParams.get('tab') === 'config' ? 'config' : 'build'
-  const auth = useAuth({ redirectOnUnauthenticated: tab === 'build' })
-  const isAdmin = auth.user?.role === 'admin'
   const [config, setConfig] = useState(loadModelConfig)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -38,8 +35,8 @@ export default function AdminPage() {
     title: '', artist: '', venueName: '河北奥林匹克体育中心体育场', city: '石家庄',
     date: '2026-11-14', time: '18:00', existingVenueId: 'venue_hebei_olympic',
   })
-  const venues = trpc.builder.venues.useQuery(undefined, { enabled: isAdmin, retry: false })
-  const builds = trpc.builder.listAll.useQuery(undefined, { enabled: isAdmin, retry: false })
+  const venues = trpc.builder.venues.useQuery(undefined, { retry: false })
+  const builds = trpc.builder.listAll.useQuery(undefined, { retry: false })
   const testConfig = trpc.builder.testConfig.useMutation()
   const build = trpc.builder.build.useMutation()
   const publish = trpc.builder.publish.useMutation()
@@ -50,11 +47,6 @@ export default function AdminPage() {
     setPreview(url)
     return () => URL.revokeObjectURL(url)
   }, [file])
-
-  if (tab === 'build' && auth.isLoading) return <div className="admin-gate"><LoaderCircle className="spin" />正在确认管理员身份…</div>
-  if (tab === 'build' && !isAdmin) {
-    return <div className="admin-gate"><KeyRound /><h1>需要管理员权限</h1><p>AI 构建与模拟器发布仅对管理员开放。</p><Link to="/">返回首页</Link></div>
-  }
 
   const submitConfig = (event: React.FormEvent) => {
     event.preventDefault(); setNotice(''); setError('')
@@ -111,7 +103,6 @@ export default function AdminPage() {
       <main className="admin-main">
         <div className="admin-heading">
           <div><span>SIMULATION BUILDER</span><h1>构建管理</h1><p>一张 2D 分区图，生成一场可发布的现场模拟。</p></div>
-          {auth.user && <button className="logout-button" onClick={auth.logout}><LogOut size={15} />退出登录</button>}
         </div>
         <div className="admin-tabs" role="tablist">
           <button role="tab" aria-selected={tab === 'build'} className={tab === 'build' ? 'active' : ''} onClick={() => { setSearchParams({}, { replace: true }); setError(''); setNotice('') }}><Sparkles size={16} />AI 构建</button>
@@ -172,8 +163,8 @@ export default function AdminPage() {
                 <label className="wide"><span>Search API Key <small>仅保存到当前浏览器</small></span><input type="password" value={config.searchApiKey} onChange={(e) => setConfig({ ...config, searchApiKey: e.target.value })} autoComplete="new-password" /></label>
               </div>
             </section>
-            <div className="config-actions"><button type="submit"><Check />保存到此浏览器</button><button type="button" onClick={runTest} disabled={!isAdmin || testConfig.isPending} title={isAdmin ? '使用当前配置测试主模型连接' : '测试模型需要管理员登录'}>{testConfig.isPending ? <LoaderCircle className="spin" /> : <Settings2 />}测试当前配置</button></div>
-            <p className="security-note"><KeyRound size={14} />配置保存在当前浏览器 localStorage，清除浏览器数据后需重新填写。打开和保存配置无需登录；测试模型与 AI 构建需要管理员权限。测试或构建时会随请求临时传给服务端使用，不写入 Supabase、模拟 JSON 或公开响应。模型和搜索调用按服务商规则计费。</p>
+            <div className="config-actions"><button type="submit"><Check />保存到此浏览器</button><button type="button" onClick={runTest} disabled={testConfig.isPending} title="使用当前配置测试主模型连接">{testConfig.isPending ? <LoaderCircle className="spin" /> : <Settings2 />}测试当前配置</button></div>
+            <p className="security-note"><KeyRound size={14} />配置保存在当前浏览器 localStorage，清除浏览器数据后需重新填写。配置完整后即可测试模型和上传构建，无需登录。测试或构建时会随请求临时传给服务端使用，不写入 Supabase、模拟 JSON 或公开响应。模型和搜索调用按服务商规则计费。</p>
           </form>
         )}
       </main>
