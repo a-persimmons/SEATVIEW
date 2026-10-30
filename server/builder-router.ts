@@ -4,6 +4,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import defaultSimulationJson from "@contracts/default-simulation.json";
 import { simulationSchema, toSimulationSummary, type Simulation } from "@contracts/simulation";
+import { recognizedEventSchema, researchSourceSchema } from "@contracts/builder";
 import { usableModelConfigSchema, type ModelConfig } from "@contracts/model-config";
 import { createRouter, publicQuery } from "./middleware";
 import { getSupabase, isSupabaseConfigured } from "./supabase";
@@ -28,6 +29,48 @@ function provider(config: ModelConfig) {
     apiKey: config.apiKey,
     supportsStructuredOutputs: true,
   });
+}
+
+function normalizeVenueName(value: string) {
+  return value.toLocaleLowerCase().replace(/[\s·•\-—_（）()]/g, "");
+}
+
+async function matchReusableVenue(venueName: string) {
+  const target = normalizeVenueName(venueName);
+  if (!target) return "";
+  const matches = (names: string[]) => names.some((name) => normalizeVenueName(name) === target);
+  if (matches([defaultSimulation.venue.name, ...defaultSimulation.venue.aliases])) {
+    return defaultSimulation.venue.id;
+  }
+  if (!isSupabaseConfigured()) return "";
+  const { data, error } = await getSupabase().from("venues").select("id,name,aliases");
+  if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+  const row = (data as { id: string; name: string; aliases: string[] }[]).find((item) =>
+    matches([item.name, ...(item.aliases || [])]),
+  );
+  return row?.id || "";
+}
+
+async function getVenueById(id: string): Promise<Simulation["venue"] | null> {
+  if (id === defaultSimulation.venue.id) return defaultSimulation.venue;
+  const { data, error } = await requireSupabase().from("venues").select("*").eq("id", id).maybeSingle();
+  if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+  if (!data) return null;
+  const row = data as {
+    id: string; name: string; city: string; aliases: string[];
+    public_facts: string[]; sources: { label: string; url: string; note?: string }[];
+    model: Simulation["venue"]["model"]; stand_tiers: Simulation["venue"]["standTiers"];
+  };
+  return {
+    id: row.id,
+    name: row.name,
+    city: row.city,
+    aliases: row.aliases || [],
+    publicFacts: row.public_facts || [],
+    sources: row.sources || [],
+    model: row.model,
+    standTiers: row.stand_tiers,
+  };
 }
 
 async function searchVenue(venueName: string, city: string, config: ModelConfig) {
@@ -63,17 +106,38 @@ async function searchVenue(venueName: string, city: string, config: ModelConfig)
   return sources;
 }
 
-const buildInput = z.object({
+const imageInput = {
+  imageBase64: z.string().min(100).max(18_000_000),
+  imageType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+};
+
+const confirmedEventInput = {
   title: z.string().trim().min(1).max(120),
   artist: z.string().trim().min(1).max(120),
-  venueName: z.string().trim().min(1).max(160),
+  venueName: z.string().trim().min(1, { message: "VENUE_NAME_REQUIRED" }).max(160),
   city: z.string().trim().min(1).max(60),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   time: z.string().regex(/^\d{2}:\d{2}$/),
   existingVenueId: z.string().optional().default(""),
+};
+
+const recognitionInput = z.object({
   modelConfig: usableModelConfigSchema,
-  imageBase64: z.string().min(100).max(18_000_000),
-  imageType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+  ...imageInput,
+});
+
+const researchInput = z.object({
+  venueName: z.string().trim().min(1, { message: "VENUE_NAME_REQUIRED" }).max(160),
+  city: z.string().trim().min(1).max(60),
+  existingVenueId: z.string().optional().default(""),
+  modelConfig: usableModelConfigSchema,
+});
+
+const generateInput = z.object({
+  ...confirmedEventInput,
+  modelConfig: usableModelConfigSchema,
+  research: z.array(researchSourceSchema).max(6).default([]),
+  ...imageInput,
 });
 
 export const builderRouter = createRouter({
@@ -125,48 +189,70 @@ export const builderRouter = createRouter({
     return (data as { data: Simulation }[]).map((row) => toSimulationSummary(simulationSchema.parse(row.data)));
   }),
 
-  build: publicQuery.input(buildInput).mutation(async ({ input }) => {
-    const supabase = requireSupabase();
+  recognize: publicQuery.input(recognitionInput).mutation(async ({ input }) => {
     const config = input.modelConfig;
     const visionModel = config.visionModelName || config.modelName;
-    const reusingDefault = input.existingVenueId === defaultSimulation.venue.id;
-    let venue = reusingDefault ? defaultSimulation.venue : null;
-    let research: { title: string; url: string; content?: string }[] = [];
-
-    if (input.existingVenueId && !venue) {
-      const { data, error } = await supabase.from("venues").select("*").eq("id", input.existingVenueId).maybeSingle();
-      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
-      if (data) {
-        const row = data as {
-          id: string; name: string; city: string; aliases: string[];
-          public_facts: string[]; sources: { label: string; url: string }[];
-          model: Simulation["venue"]["model"]; stand_tiers: Simulation["venue"]["standTiers"];
-        };
-        venue = {
-          id: row.id, name: row.name, city: row.city, aliases: row.aliases || [],
-          publicFacts: row.public_facts || [], sources: row.sources || [],
-          model: row.model, standTiers: row.stand_tiers,
-        };
-      }
+    try {
+      const generated = await generateObject({
+        model: provider(config)(visionModel),
+        schema: recognizedEventSchema,
+        system: "你是演唱会宣传图信息提取器。只提取图片中明确可见的演出名称、演出主题或艺人、城市、场馆全称、日期和开始时间，不分析座位布局，不联网，不猜测。无法确认的文本字段返回空字符串。日期统一为 YYYY-MM-DD，时间统一为 24 小时制 HH:mm。场馆必须尽量保留完整正式名称，不得把城市名当作场馆名。",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "请读取这张完整的大麦 App 或主办方演唱会 2D 图，仅返回可确认的六项基本信息。" },
+            { type: "image", image: input.imageBase64, mediaType: input.imageType },
+          ],
+        }],
+      });
+      const recognized = recognizedEventSchema.parse(generated.object);
+      return {
+        ...recognized,
+        existingVenueId: await matchReusableVenue(recognized.venueName),
+      };
+    } catch (reason) {
+      if (reason instanceof TRPCError) throw reason;
+      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "图片信息识别失败，请检查视觉模型配置或更换清晰原图" });
     }
-    if (!venue) research = await searchVenue(input.venueName, input.city, config);
+  }),
+
+  research: publicQuery.input(researchInput).mutation(async ({ input }) => {
+    if (input.existingVenueId) {
+      const venue = await getVenueById(input.existingVenueId);
+      if (!venue) throw new TRPCError({ code: "NOT_FOUND", message: "未找到要复用的场馆，请改为新场馆检索" });
+      return { mode: "reuse" as const, venue, research: [] };
+    }
+    const research = await searchVenue(input.venueName, input.city, input.modelConfig);
+    return { mode: "search" as const, venue: null, research };
+  }),
+
+  generate: publicQuery.input(generateInput).mutation(async ({ input }) => {
+    const config = input.modelConfig;
+    const visionModel = config.visionModelName || config.modelName;
+    const venue = input.existingVenueId ? await getVenueById(input.existingVenueId) : null;
+    if (input.existingVenueId && !venue) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "未找到要复用的场馆，请返回上一步重新检索" });
+    }
+    if (!venue && !input.research.length) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RESEARCH_REQUIRED" });
+    }
 
     const id = `sim_${crypto.randomUUID().replaceAll("-", "")}`;
     const slug = `event-${Date.now().toString(36)}`;
     const generated = await generateObject({
       model: provider(config)(visionModel),
       schema: simulationSchema,
-      system: `你是演唱会场馆模拟器的数据建模器。根据用户给出的演出信息和一张主办方 2D 分区图，生成可直接渲染的完整 JSON。不得生成座椅逐点坐标，座椅由客户端规则生成。舞台位于负 Z 方向，所有分区坐标使用米。票档颜色必须彼此可区分，文字主题颜色保持高对比。公开建筑参数只能来自给定资料，不确定的尺度使用明确估算，不得编造官方排号。`,
+      system: `你是演唱会场馆模拟器的数据建模器。根据用户确认的演出信息、已检索公开建筑资料和一张主办方 2D 分区图，生成可直接渲染的完整 JSON。不得生成座椅逐点坐标，座椅由客户端规则生成。舞台位于负 Z 方向，所有分区坐标使用米。票档颜色必须彼此可区分，文字主题颜色保持高对比。公开建筑参数只能来自给定资料，不确定的尺度使用明确估算，不得编造官方排号。`,
       messages: [{
         role: "user",
         content: [
-          { type: "text", text: `演出信息：${JSON.stringify({ title: input.title, artist: input.artist, venueName: input.venueName, city: input.city, date: input.date, time: input.time, existingVenueId: input.existingVenueId })}\n固定 ID：${id}；固定 slug：${slug}；状态 draft；版本 1；更新时间 ${new Date().toISOString()}。\n${venue ? `复用场馆基础模型：${JSON.stringify(venue)}` : `新场馆公开搜索结果：${JSON.stringify(research)}`}\n请读取图片中的全部票区、票档、舞台、延伸台和控台相对关系，生成完整 simulation。${venue ? "必须原样复用给定场馆的 id、公开资料、建筑模型和看台参数，只为本场生成新的 layout 与 theme。" : `新场馆 venue.id 使用 venue_${crypto.randomUUID().replaceAll("-", "")}。`}meta.aliases 包含常见场馆别名。render 默认使用 58 度中心视野、1.62 米坐姿眼高、1.75 米人物高度、5 米距离取整。` },
+          { type: "text", text: `用户已确认的演出信息：${JSON.stringify({ title: input.title, artist: input.artist, venueName: input.venueName, city: input.city, date: input.date, time: input.time, existingVenueId: input.existingVenueId })}\n固定 ID：${id}；固定 slug：${slug}；状态 draft；版本 1；更新时间 ${new Date().toISOString()}。\n${venue ? `复用场馆基础模型：${JSON.stringify(venue)}` : `用户确认后检索到的新场馆公开资料：${JSON.stringify(input.research)}`}\n请读取图片中的全部票区、票档、舞台、延伸台和控台相对关系，生成完整 simulation。${venue ? "必须原样复用给定场馆的 id、公开资料、建筑模型和看台参数，只为本场生成新的 layout 与 theme。" : `新场馆 venue.id 使用 venue_${crypto.randomUUID().replaceAll("-", "")}。`}meta.aliases 包含常见场馆别名。render 默认使用 58 度中心视野、1.62 米坐姿眼高、1.75 米人物高度、5 米距离取整。` },
           { type: "image", image: input.imageBase64, mediaType: input.imageType },
         ],
       }],
     });
 
-    const simulation = simulationSchema.parse({
+    return simulationSchema.parse({
       ...generated.object,
       ...(venue ? { venue } : {}),
       meta: {
@@ -180,9 +266,22 @@ export const builderRouter = createRouter({
         referenceImageUrl: undefined,
       },
     });
+  }),
 
+  saveDraft: publicQuery.input(z.object({
+    simulation: simulationSchema,
+    ...imageInput,
+  })).mutation(async ({ input }) => {
+    const supabase = requireSupabase();
+    const simulation = input.simulation;
+    if (simulation.meta.status !== "draft") {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "只有构建草稿可以通过此接口保存" });
+    }
+    if (simulation.meta.slug === defaultSimulation.meta.slug) {
+      throw new TRPCError({ code: "CONFLICT", message: "默认河北奥体样本不可被上传构建覆盖" });
+    }
     const extension = input.imageType === "image/png" ? "png" : input.imageType === "image/webp" ? "webp" : "jpg";
-    const referenceImageKey = `simulations/${id}/seat-map.${extension}`;
+    const referenceImageKey = `simulations/${simulation.meta.id}/seat-map.${extension}`;
     const bytes = Buffer.from(input.imageBase64, "base64");
     const upload = await supabase.storage.from("seatview-assets").upload(referenceImageKey, bytes, {
       contentType: input.imageType,
