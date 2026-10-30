@@ -11,7 +11,7 @@ export default function SiteHeader() {
       <nav aria-label="主导航">
         <NavLink to="/" end>演出</NavLink>
         <NavLink to="/search"><Search size={15} />搜索</NavLink>
-        <NavLink to="/admin" className="admin-nav"><Settings2 size={15} /><span>构建管理</span></NavLink>
+        <NavLink to="/admin?tab=config" className="admin-nav" aria-label="模型与搜索 API 配置" title="模型与搜索 API 配置"><Settings2 size={15} /><span>模型设置</span></NavLink>
       </nav>
     </header>
   )

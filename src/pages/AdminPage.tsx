@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowRight, Check, Database, FileImage, KeyRound, LoaderCircle, LogOut, Search, Settings2, Sparkles, Upload, Eye } from 'lucide-react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import type { Simulation } from '@contracts/simulation'
 import { trpc } from '@/providers/trpc'
 import { useAuth } from '@/hooks/useAuth'
@@ -30,7 +30,8 @@ function fileToBase64(file: File) {
 export default function AdminPage() {
   const auth = useAuth({ redirectOnUnauthenticated: true })
   const isAdmin = auth.user?.role === 'admin'
-  const [tab, setTab] = useState<'build' | 'config'>('build')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab = searchParams.get('tab') === 'config' ? 'config' : 'build'
   const [config, setConfig] = useState(defaultConfig)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -127,8 +128,8 @@ export default function AdminPage() {
           <button className="logout-button" onClick={auth.logout}><LogOut size={15} />退出登录</button>
         </div>
         <div className="admin-tabs" role="tablist">
-          <button role="tab" aria-selected={tab === 'build'} className={tab === 'build' ? 'active' : ''} onClick={() => { setTab('build'); setError(''); setNotice('') }}><Sparkles size={16} />AI 构建</button>
-          <button role="tab" aria-selected={tab === 'config'} className={tab === 'config' ? 'active' : ''} onClick={() => { setTab('config'); setError(''); setNotice('') }}><Settings2 size={16} />模型与搜索</button>
+          <button role="tab" aria-selected={tab === 'build'} className={tab === 'build' ? 'active' : ''} onClick={() => { setSearchParams({}, { replace: true }); setError(''); setNotice('') }}><Sparkles size={16} />AI 构建</button>
+          <button role="tab" aria-selected={tab === 'config'} className={tab === 'config' ? 'active' : ''} onClick={() => { setSearchParams({ tab: 'config' }, { replace: true }); setError(''); setNotice('') }}><Settings2 size={16} />模型与搜索</button>
         </div>
         {(notice || error) && <div className={`admin-notice ${error ? 'is-error' : ''}`} role="status">{error || notice}</div>}
         {configQuery.error && <div className="admin-notice is-error">{readableError(configQuery.error.message)}</div>}
