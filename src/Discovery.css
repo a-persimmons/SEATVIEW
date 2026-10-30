@@ -38,11 +38,11 @@
   gap: 20px;
   border-bottom: 1px solid #26384a99;
 }
-.site-brand { display: flex; align-items: center; gap: 10px; color: var(--discovery-accent); text-decoration: none; }
-.site-brand > span { color: var(--discovery-text); font: 700 15px/1 "Arial Narrow", "PingFang SC", sans-serif; letter-spacing: .15em; }
+.site-brand { display: flex; align-items: center; flex-shrink: 0; gap: 10px; color: var(--discovery-accent); text-decoration: none; }
+.site-brand > span { color: var(--discovery-text); font: 700 15px/1 "Arial Narrow", "PingFang SC", sans-serif; letter-spacing: .15em; white-space: nowrap; }
 .site-brand small { display: block; margin-top: 6px; color: var(--discovery-dim); font: 500 10px/1 "PingFang SC", sans-serif; letter-spacing: .12em; }
-.site-header nav { display: flex; align-items: center; gap: 4px; }
-.site-header nav a { min-height: 44px; padding: 0 13px; display: flex; align-items: center; gap: 6px; border-radius: 4px; color: var(--discovery-soft); font-size: 13px; text-decoration: none; transition: color 180ms ease, background-color 180ms ease; }
+.site-header nav { display: flex; align-items: center; flex-shrink: 0; gap: 4px; }
+.site-header nav a { min-height: 44px; padding: 0 13px; display: flex; align-items: center; flex-shrink: 0; gap: 6px; border-radius: 4px; color: var(--discovery-soft); font-size: 13px; text-decoration: none; white-space: nowrap; transition: color 180ms ease, background-color 180ms ease; }
 .site-header nav a:hover, .site-header nav a.active { color: var(--discovery-accent); background: #5de7f50c; }
 .site-header nav .admin-nav { margin-left: 8px; border-left: 1px solid var(--discovery-line); border-radius: 0; }
 
@@ -263,8 +263,8 @@
 }
 
 @media (max-width: 700px) {
-  .site-header { min-height: 66px; }
-  .site-header nav a { padding: 0 9px; }
+  .site-header { min-height: 66px; gap: 12px; }
+  .site-header nav a { padding: 0 7px; }
   .site-header nav .admin-nav { margin-left: 0; }
   .site-header nav .admin-nav span { display: none; }
   .home-hero { min-height: auto; padding: 52px 0 70px; grid-template-columns: 1fr; gap: 52px; }

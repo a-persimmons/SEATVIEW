@@ -24,10 +24,10 @@ function fileToBase64(file: File) {
 }
 
 export default function AdminPage() {
-  const auth = useAuth({ redirectOnUnauthenticated: true })
-  const isAdmin = auth.user?.role === 'admin'
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = searchParams.get('tab') === 'config' ? 'config' : 'build'
+  const auth = useAuth({ redirectOnUnauthenticated: tab === 'build' })
+  const isAdmin = auth.user?.role === 'admin'
   const [config, setConfig] = useState(loadModelConfig)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -51,9 +51,9 @@ export default function AdminPage() {
     return () => URL.revokeObjectURL(url)
   }, [file])
 
-  if (auth.isLoading) return <div className="admin-gate"><LoaderCircle className="spin" />正在确认管理员身份…</div>
-  if (!isAdmin) {
-    return <div className="admin-gate"><KeyRound /><h1>需要管理员权限</h1><p>模型配置与模拟器发布仅对管理员开放。</p><Link to="/">返回首页</Link></div>
+  if (tab === 'build' && auth.isLoading) return <div className="admin-gate"><LoaderCircle className="spin" />正在确认管理员身份…</div>
+  if (tab === 'build' && !isAdmin) {
+    return <div className="admin-gate"><KeyRound /><h1>需要管理员权限</h1><p>AI 构建与模拟器发布仅对管理员开放。</p><Link to="/">返回首页</Link></div>
   }
 
   const submitConfig = (event: React.FormEvent) => {
@@ -111,7 +111,7 @@ export default function AdminPage() {
       <main className="admin-main">
         <div className="admin-heading">
           <div><span>SIMULATION BUILDER</span><h1>构建管理</h1><p>一张 2D 分区图，生成一场可发布的现场模拟。</p></div>
-          <button className="logout-button" onClick={auth.logout}><LogOut size={15} />退出登录</button>
+          {auth.user && <button className="logout-button" onClick={auth.logout}><LogOut size={15} />退出登录</button>}
         </div>
         <div className="admin-tabs" role="tablist">
           <button role="tab" aria-selected={tab === 'build'} className={tab === 'build' ? 'active' : ''} onClick={() => { setSearchParams({}, { replace: true }); setError(''); setNotice('') }}><Sparkles size={16} />AI 构建</button>
@@ -172,8 +172,8 @@ export default function AdminPage() {
                 <label className="wide"><span>Search API Key <small>仅保存到当前浏览器</small></span><input type="password" value={config.searchApiKey} onChange={(e) => setConfig({ ...config, searchApiKey: e.target.value })} autoComplete="new-password" /></label>
               </div>
             </section>
-            <div className="config-actions"><button type="submit"><Check />保存到此浏览器</button><button type="button" onClick={runTest} disabled={testConfig.isPending}>{testConfig.isPending ? <LoaderCircle className="spin" /> : <Settings2 />}测试当前配置</button></div>
-            <p className="security-note"><KeyRound size={14} />配置保存在当前浏览器 localStorage，清除浏览器数据后需重新填写。测试或构建时会随请求临时传给服务端使用，不写入 Supabase、模拟 JSON 或公开响应。模型和搜索调用按服务商规则计费。</p>
+            <div className="config-actions"><button type="submit"><Check />保存到此浏览器</button><button type="button" onClick={runTest} disabled={!isAdmin || testConfig.isPending} title={isAdmin ? '使用当前配置测试主模型连接' : '测试模型需要管理员登录'}>{testConfig.isPending ? <LoaderCircle className="spin" /> : <Settings2 />}测试当前配置</button></div>
+            <p className="security-note"><KeyRound size={14} />配置保存在当前浏览器 localStorage，清除浏览器数据后需重新填写。打开和保存配置无需登录；测试模型与 AI 构建需要管理员权限。测试或构建时会随请求临时传给服务端使用，不写入 Supabase、模拟 JSON 或公开响应。模型和搜索调用按服务商规则计费。</p>
           </form>
         )}
       </main>
